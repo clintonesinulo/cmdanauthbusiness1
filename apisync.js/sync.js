@@ -1,56 +1,75 @@
 /**
  * CMDA-NAUTH Sync API — Vercel Serverless Function
- * Uses Upstash Redis REST API directly (no npm install needed).
- * Environment variables auto-injected by Vercel when you connect Upstash:
- *   UPSTASH_REDIS_REST_URL
- *   UPSTASH_REDIS_REST_TOKEN
+ * Upstash Redis via REST (no packages needed).
+ * Vercel auto-injects: UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
  */
 
-const memStore = {}; // fallback if Redis not connected yet
+const memStore = {};
 
 function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// ── Upstash Redis via plain HTTP (no SDK needed) ──────────────────────────
-async function redisGet(key) {
-    const url  = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-    if (!url || !token) return null;
-    const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-        headers: { Authorization: `Bearer ${token}` }
+// ── Parse raw request body (Vercel does NOT auto-parse JSON) ──────────────
+function parseBody(req) {
+    return new Promise((resolve) => {
+        if (req.method === 'GET' || req.method === 'OPTIONS') return resolve({});
+        // If Vercel already parsed it (happens sometimes)
+        if (req.body && typeof req.body === 'object') return resolve(req.body);
+        let raw = '';
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+            try { resolve(JSON.parse(raw)); } catch(e) { resolve({}); }
+        });
+        req.on('error', () => resolve({}));
     });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (json.result === null || json.result === undefined) return null;
-    try { return JSON.parse(json.result); } catch(e) { return json.result; }
+}
+
+// ── Upstash REST helpers ──────────────────────────────────────────────────
+function upstashHeaders() {
+    return { Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}` };
+}
+
+async function redisGet(key) {
+    const base = process.env.UPSTASH_REDIS_REST_URL;
+    const tok  = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (!base || !tok) return null;
+    try {
+        const res = await fetch(`${base}/get/${encodeURIComponent(key)}`, {
+            headers: { Authorization: `Bearer ${tok}` }
+        });
+        if (!res.ok) return null;
+        const json = await res.json();
+        if (!json.result) return null;
+        return JSON.parse(json.result);
+    } catch(e) { return null; }
 }
 
 async function redisSet(key, value) {
-    const url  = process.env.UPSTASH_REDIS_REST_URL;
-    const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-    if (!url || !token) return false;
-    const res = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(JSON.stringify(value)) // double-stringify: Upstash stores as string
-    });
-    return res.ok;
+    const base = process.env.UPSTASH_REDIS_REST_URL;
+    const tok  = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (!base || !tok) return false;
+    try {
+        const res = await fetch(`${base}/set/${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(JSON.stringify(value))
+        });
+        return res.ok;
+    } catch(e) { return false; }
 }
 
-// ── Storage wrappers with in-memory fallback ──────────────────────────────
 async function storeGet(id) {
-    const val = await redisGet('store:' + id);
-    if (val !== null) return val;
-    return memStore[id] || null;
+    const val = await redisGet('cmda:' + id);
+    return val !== null ? val : (memStore[id] || null);
 }
 
 async function storeSet(id, data) {
-    const saved = await redisSet('store:' + id, data);
-    if (!saved) memStore[id] = data; // fallback
+    const ok = await redisSet('cmda:' + id, data);
+    memStore[id] = data; // always keep in-memory copy too
 }
 
-// ── Vercel handler ────────────────────────────────────────────────────────
+// ── Main handler ──────────────────────────────────────────────────────────
 module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
@@ -59,39 +78,38 @@ module.exports = async function handler(req, res) {
 
     if (req.method === 'OPTIONS') return res.status(200).end();
 
+    // Parse body for all non-GET requests
+    const body = await parseBody(req);
+
     try {
-        // GET /api/sync?id=xxx  — read store
+        // ── GET: read store ──────────────────────────────────────────────
         if (req.method === 'GET') {
-            const id = req.query && req.query.id;
+            const id = (req.query || {}).id;
             if (!id) return res.status(400).json({ error: 'Missing id' });
             const data = await storeGet(id);
             if (!data) return res.status(404).json({ error: 'Store not found' });
             return res.status(200).json({ id, data });
         }
 
-        // POST /api/sync  — create new store
+        // ── POST: create store ───────────────────────────────────────────
         if (req.method === 'POST') {
-            const body = req.body || {};
-            if (body.action !== 'create') return res.status(400).json({ error: 'Invalid action' });
             const id = generateId();
             await storeSet(id, body.data || {});
             return res.status(201).json({ id, created: true });
         }
 
-        // PUT /api/sync  — update store
+        // ── PUT: update store ────────────────────────────────────────────
         if (req.method === 'PUT') {
-            const body = req.body || {};
             const { id, data } = body;
             if (!id) return res.status(400).json({ error: 'Missing id' });
-            const existing = await storeGet(id);
-            if (!existing) return res.status(404).json({ error: 'Store not found' });
-            await storeSet(id, data);
+            await storeSet(id, data || {});
             return res.status(200).json({ id, updated: true });
         }
 
         return res.status(405).json({ error: 'Method not allowed' });
+
     } catch (err) {
-        console.error('[sync] error:', err);
+        console.error('[sync]', err);
         return res.status(500).json({ error: 'Server error', detail: err.message });
     }
 };
