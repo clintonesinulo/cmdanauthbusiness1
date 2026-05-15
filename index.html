@@ -994,7 +994,7 @@ function staffNormalizeProducts(items) {
             const res = await fetch(_SYNC_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'create', data: _packState() })
+                body: JSON.stringify({ data: _packState() })
             });
             if (!res.ok) throw new Error(`Create store failed: ${res.status}`);
             const json = await res.json();
@@ -1276,8 +1276,10 @@ function staffNormalizeProducts(items) {
                 console.info(`%c[CMDA-NAUTH] Store Code: ${code} | Store ID: ${_binId}`, 'color:#00A09D; font-weight:bold; font-size:13px;');
             } catch (e) {
                 console.error('Sync init error:', e);
+                // Show exact error in toast so you can diagnose
+                const msg = e && e.message ? e.message : String(e);
                 setSyncStatus('error', 'Offline mode');
-                showToast('Cloud sync unavailable — running locally. Will retry in 30s.', 'warning');
+                showToast('Sync error: ' + msg + ' — retrying in 30s', 'warning');
                 setTimeout(() => _initSync(false), 30000);
             }
         }
