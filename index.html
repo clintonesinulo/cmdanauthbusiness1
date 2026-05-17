@@ -910,12 +910,14 @@ function staffNormalizeProducts(items) {
 
         // =====================================================================
         //  FIREBASE REALTIME DATABASE SYNC ENGINE
-        //  Uses your existing Firebase project — no extra setup needed.
-        //  Plain REST calls — no SDK, no auth required.
+        //  ─────────────────────────────────────────────────────────────────────
+        //  Uses Firebase Realtime Database REST API — no SDK, no auth needed.
+        //  Your Firebase project is already configured below.
+        //  Just deploy to Vercel (or any host) and sync works immediately.
         // =====================================================================
 
-        const FIREBASE_DB_URL = 'https://cmda-nauth-business-unit-default-rtdb.firebaseio.com';
-        const BIN_ID_KEY      = 'cmda_nauth_bin_id';
+        const RTDB = 'https://cmda-nauth-business-unit-default-rtdb.firebaseio.com';
+        const BIN_ID_KEY = 'cmda_nauth_store_id';
 
         // ── runtime state ──────────────────────────────────────────────────────
         let syncReady       = false;
@@ -972,34 +974,42 @@ function staffNormalizeProducts(items) {
                                     chat: data.chat, finance: data.finance });
         }
 
-        // ── Firebase Realtime DB REST helpers ─────────────────────────────────
+        // ── Firebase RTDB REST: create store ──────────────────────────────────
         async function _createBin() {
-            const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-            const res = await fetch(`${FIREBASE_DB_URL}/stores/${id}.json`, {
+            const id = 'store_' + Date.now().toString(36);
+            const res = await fetch(`${RTDB}/stores/${id}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(_packState())
             });
-            if (!res.ok) throw new Error(`Firebase write failed: ${res.status}`);
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`Firebase write failed ${res.status}: ${txt}`);
+            }
             _binId = id;
             localStorage.setItem(BIN_ID_KEY, id);
             return id;
         }
 
+        // ── Firebase RTDB REST: read store ────────────────────────────────────
         async function _readBin() {
-            const res = await fetch(`${FIREBASE_DB_URL}/stores/${_binId}.json`);
-            if (!res.ok) throw new Error(`Firebase read failed: ${res.status}`);
+            const res = await fetch(`${RTDB}/stores/${_binId}.json`);
+            if (!res.ok) {
+                const txt = await res.text();
+                throw new Error(`Firebase read failed ${res.status}: ${txt}`);
+            }
             const data = await res.json();
-            if (!data) {
+            if (data === null) {
                 _binId = null;
                 localStorage.removeItem(BIN_ID_KEY);
-                throw new Error('Store not found');
+                throw new Error('Store not found in Firebase');
             }
             return data;
         }
 
+        // ── Firebase RTDB REST: write store ───────────────────────────────────
         async function _writeBin() {
-            const res = await fetch(`${FIREBASE_DB_URL}/stores/${_binId}.json`, {
+            const res = await fetch(`${RTDB}/stores/${_binId}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(_packState())
@@ -1250,10 +1260,8 @@ function staffNormalizeProducts(items) {
                 console.info(`%c[CMDA-NAUTH] Store Code: ${code} | Store ID: ${_binId}`, 'color:#00A09D; font-weight:bold; font-size:13px;');
             } catch (e) {
                 console.error('Sync init error:', e);
-                // Show exact error in toast so you can diagnose
-                const msg = e && e.message ? e.message : String(e);
                 setSyncStatus('error', 'Offline mode');
-                showToast('Sync error: ' + msg + ' — retrying in 30s', 'warning');
+                showToast('Cloud sync unavailable — running locally. Will retry in 30s.', 'warning');
                 setTimeout(() => _initSync(false), 30000);
             }
         }
@@ -2380,14 +2388,9 @@ function staffNormalizeProducts(items) {
                 senderOnline: true
             };
             input.value = '';
-            if (firebaseReady) {
-                // Firestore chat: each message is its own doc, real-time listener picks it up
-                await cloudSendChat(msg);
-            } else {
-                db_chat.push(msg);
-                persist();
-                renderChat();
-            }
+            db_chat.push(msg);
+            await persist();
+            renderChat();
             scrollToChatBottom(); 
         }
         function renderChat() { 
