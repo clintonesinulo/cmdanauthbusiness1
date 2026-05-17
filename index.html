@@ -909,29 +909,13 @@ function staffNormalizeProducts(items) {
 
 
         // =====================================================================
-        //  VERCEL SYNC ENGINE  
-        //  ─────────────────────────────────────────────────────────────────────
-        //  ZERO SETUP — deploy to Vercel and sync works automatically.
-        //  All data is stored via /api/sync (a Vercel serverless function).
-        //
-        //  HOW IT WORKS:
-        //  • Calls /api/sync on your Vercel deployment to read/write store data
-        //  • Each store gets a unique Store ID (saved in localStorage)
-        //  • Polls every 5 seconds for changes from other devices/users
-        //  • BroadcastChannel syncs instantly between tabs on same browser
-        //  • Works on every phone, tablet, laptop — any browser
-        //
-        //  NOTE: When opening the HTML file directly (file://) sync is disabled
-        //  and the app runs in local-only mode. Deploy to Vercel for live sync.
+        //  FIREBASE REALTIME DATABASE SYNC ENGINE
+        //  Uses your existing Firebase project — no extra setup needed.
+        //  Plain REST calls — no SDK, no auth required.
         // =====================================================================
 
-        const BIN_ID_KEY  = 'cmda_nauth_bin_id';
-        const _SYNC_URL   = (() => {
-            // Auto-detect: if running on Vercel/web server, use relative API path
-            // If opening as local file, disable cloud sync gracefully
-            if (location.protocol === 'file:') return null;
-            return '/api/sync';
-        })();
+        const FIREBASE_DB_URL = 'https://cmda-nauth-business-unit-default-rtdb.firebaseio.com';
+        const BIN_ID_KEY      = 'cmda_nauth_bin_id';
 
         // ── runtime state ──────────────────────────────────────────────────────
         let syncReady       = false;
@@ -939,7 +923,7 @@ function staffNormalizeProducts(items) {
         let _saveTimer      = null;
         let _pollTimer      = null;
         let _lastRemoteHash = '';
-        let _bc             = null;  // BroadcastChannel for same-browser tab sync
+        let _bc             = null;
 
         // ── sync status indicator ──────────────────────────────────────────────
         function setSyncStatus(status, msg) {
@@ -983,47 +967,44 @@ function staffNormalizeProducts(items) {
         }
 
         function _stateHash(data) {
-            // Simple hash for change detection — avoids re-renders when nothing changed
             return JSON.stringify({ biz: data.biz, staff: data.staff, inv: data.inv,
                                     sales: data.sales, acc: data.acc, purch: data.purch,
                                     chat: data.chat, finance: data.finance });
         }
 
-        // ── create a new store on first run ───────────────────────────────────
+        // ── Firebase Realtime DB REST helpers ─────────────────────────────────
         async function _createBin() {
-            const res = await fetch(_SYNC_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ data: _packState() })
-            });
-            if (!res.ok) throw new Error(`Create store failed: ${res.status}`);
-            const json = await res.json();
-            _binId = json.id;
-            localStorage.setItem(BIN_ID_KEY, _binId);
-            return _binId;
-        }
-
-        // ── read current remote state ──────────────────────────────────────────
-        async function _readBin() {
-            const res = await fetch(`${_SYNC_URL}?id=${_binId}`, {
-                headers: { 'Content-Type': 'application/json' }
-            });
-            if (!res.ok) {
-                if (res.status === 404) { _binId = null; localStorage.removeItem(BIN_ID_KEY); }
-                throw new Error(`Read store failed: ${res.status}`);
-            }
-            const json = await res.json();
-            return json.data;
-        }
-
-        // ── write current state ────────────────────────────────────────────────
-        async function _writeBin() {
-            const res = await fetch(_SYNC_URL, {
+            const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const res = await fetch(`${FIREBASE_DB_URL}/stores/${id}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: _binId, data: _packState() })
+                body: JSON.stringify(_packState())
             });
-            if (!res.ok) throw new Error(`Write store failed: ${res.status}`);
+            if (!res.ok) throw new Error(`Firebase write failed: ${res.status}`);
+            _binId = id;
+            localStorage.setItem(BIN_ID_KEY, id);
+            return id;
+        }
+
+        async function _readBin() {
+            const res = await fetch(`${FIREBASE_DB_URL}/stores/${_binId}.json`);
+            if (!res.ok) throw new Error(`Firebase read failed: ${res.status}`);
+            const data = await res.json();
+            if (!data) {
+                _binId = null;
+                localStorage.removeItem(BIN_ID_KEY);
+                throw new Error('Store not found');
+            }
+            return data;
+        }
+
+        async function _writeBin() {
+            const res = await fetch(`${FIREBASE_DB_URL}/stores/${_binId}.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(_packState())
+            });
+            if (!res.ok) throw new Error(`Firebase write failed: ${res.status}`);
         }
 
         // ── merge remote data and re-render only changed sections ─────────────
@@ -1236,13 +1217,6 @@ function staffNormalizeProducts(items) {
         // ── init: shows Connect screen on new devices, loads bin on known devices ─
         async function initFirebaseSync() {
             _initBroadcastChannel();
-
-            // If opened as local file (file://), cloud sync is impossible
-            if (!_SYNC_URL) {
-                setSyncStatus('local', 'Local file mode');
-                showToast('💡 Open via Vercel to enable live sync. Running locally for now.', 'warning');
-                return;
-            }
 
             if (!_binId) {
                 // New device — show Connect screen
