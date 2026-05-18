@@ -182,6 +182,24 @@
         .chat-header { background: var(--odoo-purple); color: white; padding: 12px 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
         .chat-messages { flex: 1; padding: 12px; overflow-y: auto; -webkit-overflow-scrolling: touch; background: #fafafa; display: flex; flex-direction: column; gap: 8px; }
         .chat-msg { max-width: 82%; padding: 8px 12px; border-radius: 15px; font-size: 13px; line-height: 1.4; word-break: break-word; }
+
+        /* ── Chat message pop-up notification ── */
+        #chat-popup-container { position:fixed; bottom:80px; right:18px; z-index:9999; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+        .chat-popup {
+            background:white; border-radius:14px; box-shadow:0 4px 20px rgba(0,0,0,0.18);
+            padding:12px 15px; min-width:240px; max-width:300px; pointer-events:all;
+            border-left:4px solid var(--odoo-teal);
+            animation: popIn 0.3s cubic-bezier(0.175,0.885,0.32,1.275) forwards;
+        }
+        .chat-popup.pop-out { animation: popOut 0.3s ease-in forwards; }
+        .chat-popup-header { display:flex; align-items:center; gap:7px; margin-bottom:5px; }
+        .chat-popup-avatar { width:28px; height:28px; border-radius:50%; background:var(--odoo-purple); color:white; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0; }
+        .chat-popup-name { font-weight:700; font-size:12px; color:var(--odoo-purple); flex:1; }
+        .chat-popup-time { font-size:10px; color:#aaa; }
+        .chat-popup-msg { font-size:13px; color:#2c3e50; line-height:1.4; word-break:break-word; }
+        .chat-popup-reply { margin-top:8px; font-size:11px; color:var(--odoo-teal); cursor:pointer; font-weight:600; }
+        @keyframes popIn { from{opacity:0;transform:translateX(40px) scale(0.9)} to{opacity:1;transform:translateX(0) scale(1)} }
+        @keyframes popOut { from{opacity:1;transform:translateX(0) scale(1)} to{opacity:0;transform:translateX(40px) scale(0.9)} }
         .msg-mine { background: var(--odoo-teal); color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
         .msg-other { background: #e1e4e8; color: #2c3e50; align-self: flex-start; border-bottom-left-radius: 2px; }
         .chat-input-area { padding: 8px 10px; border-top: 1px solid #ddd; display: flex; gap: 6px; background: white; flex-shrink: 0; }
@@ -457,6 +475,7 @@
 </style></head>
 <body>
 <div id="toast-container"></div>
+<div id="chat-popup-container"></div>
 <!-- MOBILE BOTTOM NAV -->
 <nav class="bottom-nav" id="bottom-nav">
 <div class="bottom-nav-item active" id="bn-pos" onclick="switchApp('pos')">
@@ -1330,7 +1349,8 @@ function staffNormalizeProducts(items) {
         let user = null;
         let cart = [];
         let confirmActionCallback = null;
-        let lastChatLen = db_chat.length;
+        let lastChatLen  = db_chat.length;
+        let _unreadCount = 0;
         let charts = { sales: null, top: null, profit: null };
         let scannerRunning = false;
         let currentInvoice = null;
@@ -1419,42 +1439,90 @@ function staffNormalizeProducts(items) {
         }
 
         // ===================== REAL EMAIL (EmailJS) =====================
-        // EmailJS free tier - configure with your own keys for production
-        const EMAILJS_SERVICE_ID = 'service_erp_demo';
-        const EMAILJS_TEMPLATE_ID = 'template_erp_notify';
-        const EMAILJS_PUBLIC_KEY = 'YOUR_EMAILJS_PUBLIC_KEY'; // Replace with real key
+        // ─────────────────────────────────────────────────────────────────
+        // STEP-BY-STEP SETUP (free, 200 emails/month):
+        //
+        // 1. Go to https://www.emailjs.com → Sign Up free
+        // 2. Dashboard → Email Services → Add New Service
+        //    → Choose Gmail (or any provider) → Connect your email account
+        //    → Copy the SERVICE ID (looks like: service_abc123)
+        //    → Paste it as EMAILJS_SERVICE_ID below
+        //
+        // 3. Dashboard → Email Templates → Create New Template
+        //    → Set Subject: "Your PIN for {{from_name}}"
+        //    → Set Body (paste exactly):
+        //       Hi {{to_name}},
+        //
+        //       {{message}}
+        //
+        //       — {{from_name}} Team
+        //    → Click Save → Copy the TEMPLATE ID (looks like: template_abc123)
+        //    → Paste it as EMAILJS_TEMPLATE_ID below
+        //
+        // 4. Dashboard → Account → General → Public Key
+        //    → Copy it (looks like: abc123XYZxyz)
+        //    → Paste it as EMAILJS_PUBLIC_KEY below
+        //
+        // 5. Save file → push to GitHub → done. Real emails will be sent.
+        // ─────────────────────────────────────────────────────────────────
 
-        function loadEmailJS() {
-            if (window.emailjs) return;
+        const EMAILJS_SERVICE_ID  = 'service_6221vb8';   // e.g. 'service_abc123'
+        const EMAILJS_TEMPLATE_ID = 'template_9m0p6dc';  // e.g. 'template_abc123'
+        const EMAILJS_PUBLIC_KEY  = 'Vcl_kQ4xA2IDW5Im3';   // e.g. 'abc123XYZxyz'
+
+        // Load EmailJS SDK once
+        (function loadEmailJS() {
             const s = document.createElement('script');
             s.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
-            s.onload = () => { 
-                try { emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY }); } catch(e) {}
+            s.onload = () => {
+                try {
+                    if (!EMAILJS_PUBLIC_KEY.startsWith('YOUR_')) {
+                        emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+                        console.info('[EmailJS] Initialised ✅');
+                    }
+                } catch(e) { console.warn('[EmailJS] Init failed:', e); }
             };
             document.head.appendChild(s);
-        }
+        })();
 
         async function sendRealEmail(toEmail, toName, message, subject) {
             if (!toEmail) return;
-            loadEmailJS();
+
+            // Check credentials are configured
+            if (EMAILJS_SERVICE_ID.startsWith('YOUR_') ||
+                EMAILJS_TEMPLATE_ID.startsWith('YOUR_') ||
+                EMAILJS_PUBLIC_KEY.startsWith('YOUR_')) {
+                // Not configured — show the PIN on screen so staff can still log in
+                showToast(`📧 Email not configured. PIN for ${toName}: ${message}`, 'warning');
+                console.warn('[EmailJS] Credentials not set. PIN:', message);
+                return;
+            }
+
+            // Wait up to 3s for SDK to load
+            let attempts = 0;
+            while (!window.emailjs && attempts++ < 6) {
+                await new Promise(r => setTimeout(r, 500));
+            }
+
+            if (!window.emailjs) {
+                showToast(`Could not load email service. PIN: ${message}`, 'warning');
+                return;
+            }
+
             try {
-                if (!window.emailjs) {
-                    // Fallback: show the PIN in a toast if emailjs not loaded
-                    showToast(`Email (demo): ${subject} → ${toEmail}`, 'warning');
-                    console.log(`[EMAIL] To: ${toEmail} | Subject: ${subject} | Msg: ${message}`);
-                    return;
-                }
                 await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-                    to_email: toEmail,
-                    to_name: toName,
-                    subject: subject,
-                    message: message,
-                    from_name: db_biz.name || 'Enterprise ERP'
+                    to_email:  toEmail,
+                    to_name:   toName,
+                    subject:   subject,
+                    message:   message,
+                    from_name: db_biz.name || 'CMDA-NAUTH ERP'
                 });
-                showToast(`Email sent to ${toEmail}!`, 'success');
+                showToast(`✅ PIN sent to ${toEmail}`, 'success');
             } catch (err) {
-                showToast(`Email queued (configure EmailJS to send real emails)`, 'warning');
-                console.warn('EmailJS error:', err);
+                // Show PIN on screen as fallback so staff is never locked out
+                const pin = (message.match(/\d{4}/) || [''])[0];
+                showToast(`Email failed. Show this PIN to ${toName}: ${pin}`, 'error');
+                console.error('[EmailJS] Send failed:', err);
             }
         }
 
@@ -2371,10 +2439,10 @@ function staffNormalizeProducts(items) {
         // ===================== CHAT =====================
         function toggleChat() { 
             const panel = document.getElementById('chat-panel'); 
-            panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex'; 
-            document.getElementById('chat-badge').style.display = 'none'; 
-            const fabBadge = document.getElementById('chat-badge-fab');
-            if (fabBadge) fabBadge.style.display = 'none';
+            panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+            // Reset unread count when opening chat
+            _unreadCount = 0;
+            _updateChatBadge(0);
             if (panel.style.display === 'flex') scrollToChatBottom(); 
         }
         async function sendChat() { 
@@ -2394,24 +2462,80 @@ function staffNormalizeProducts(items) {
             renderChat();
             scrollToChatBottom(); 
         }
-        function renderChat() { 
-            if (db_chat.length > lastChatLen) { 
-                const panelVisible = document.getElementById('chat-panel').style.display === 'flex'; 
-                const last = db_chat[db_chat.length - 1]; 
-                if (!panelVisible && last && last.sender !== user.name) {
-                    document.getElementById('chat-badge').style.display = 'inline';
-                    const fabBadge = document.getElementById('chat-badge-fab');
-                    if (fabBadge) { fabBadge.style.display = 'flex'; }
-                }
-                lastChatLen = db_chat.length; 
-            } 
+        // ── Show a pop-up notification for incoming message ─────────────────
+        function _showChatPopup(msg) {
+            const container = document.getElementById('chat-popup-container');
+            if (!container) return;
+            const initials = (msg.sender || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
+            const popup = document.createElement('div');
+            popup.className = 'chat-popup';
+            popup.innerHTML = `
+                <div class="chat-popup-header">
+                    <div class="chat-popup-avatar">${initials}</div>
+                    <div class="chat-popup-name">${escapeHtml(msg.sender)}</div>
+                    <div class="chat-popup-time">${msg.time || ''}</div>
+                </div>
+                <div class="chat-popup-msg">${escapeHtml(msg.msg)}</div>
+                <div class="chat-popup-reply" onclick="toggleChat(); this.closest('.chat-popup').remove();">💬 Reply</div>`;
+            container.appendChild(popup);
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => {
+                popup.classList.add('pop-out');
+                setTimeout(() => popup.remove(), 300);
+            }, 5000);
+        }
+
+        // ── Update badge with unread count number ─────────────────────────────
+        function _updateChatBadge(count) {
+            const badge    = document.getElementById('chat-badge');
+            const fabBadge = document.getElementById('chat-badge-fab');
+            if (count > 0) {
+                const label = count > 99 ? '99+' : String(count);
+                if (badge)    { badge.style.display = 'inline'; badge.textContent = label; }
+                if (fabBadge) { fabBadge.style.display = 'flex'; fabBadge.textContent = label; }
+            } else {
+                if (badge)    { badge.style.display = 'none'; badge.textContent = ''; }
+                if (fabBadge) { fabBadge.style.display = 'none'; fabBadge.textContent = ''; }
+            }
+        }
+
+        function renderChat() {
+            if (!user) return;
+            const panelVisible = document.getElementById('chat-panel') &&
+                                 document.getElementById('chat-panel').style.display === 'flex';
+
+            // Detect new incoming messages since last render
+            if (db_chat.length > lastChatLen) {
+                const newMsgs = db_chat.slice(lastChatLen);
+                newMsgs.forEach(msg => {
+                    // Only notify for OTHER people's messages
+                    if (msg.sender !== user.name) {
+                        _unreadCount++;
+                        // Show popup if chat panel is not open
+                        if (!panelVisible) {
+                            _showChatPopup(msg);
+                        }
+                    }
+                });
+                lastChatLen = db_chat.length;
+
+                // If panel is open, reset unread count
+                if (panelVisible) _unreadCount = 0;
+                _updateChatBadge(_unreadCount);
+            }
+
             // Update online staff list in chat header
             const onlineList = document.getElementById('chat-online-list');
             if (onlineList) {
                 const onlineStaff = db_staff.filter(s => s.online && s.status === 'active');
-                onlineList.innerHTML = onlineStaff.length ? onlineStaff.map(s => `<span class="status-dot status-online"></span>${escapeHtml(s.name)}`).join(' &nbsp; ') : 'No one online';
+                onlineList.innerHTML = onlineStaff.length
+                    ? onlineStaff.map(s => `<span class="status-dot status-online"></span>${escapeHtml(s.name)}`).join(' &nbsp; ')
+                    : 'No one online';
             }
-            const box = document.getElementById('chat-box'); 
+
+            // Render messages
+            const box = document.getElementById('chat-box');
+            if (!box) return;
             box.innerHTML = db_chat.slice(-50).map(c => {
                 const isMine = c.sender === user.name;
                 const senderStaff = db_staff.find(x => x.id === c.senderId || x.name === c.sender);
@@ -2423,7 +2547,7 @@ function staffNormalizeProducts(items) {
                     </span>
                     ${escapeHtml(c.msg)}
                 </div>`;
-            }).join(''); 
+            }).join('');
         }
         function scrollToChatBottom() { const box = document.getElementById('chat-box'); box.scrollTop = box.scrollHeight; }
 
