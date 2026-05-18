@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 
 <html lang="en">
@@ -1246,26 +1247,18 @@ function staffNormalizeProducts(items) {
         // ── init: shows Connect screen on new devices, loads bin on known devices ─
         async function initFirebaseSync() {
             _initBroadcastChannel();
-
-            if (!_binId) {
-                // New device — show Connect screen
-                _showConnectScreen();
-                return;
-            }
-
-            // Known device — load existing store and start syncing
-            await _initSync(false);
+            // Always go straight to _initSync — creates a new store if none exists,
+            // or loads the existing one. No connect screen blocking the app.
+            await _initSync(!_binId);
         }
 
         async function _initSync(isNewStore) {
             setSyncStatus('connecting');
             try {
                 if (isNewStore || !_binId) {
-                    showToast('Creating your store database…', 'warning');
                     await _createBin();
                     const code = _saveStoreCode(_binId);
                     _saveBinMap(code, _binId);
-                    showToast(`✅ Store created! Store Code: ${code}`, 'success');
                 } else {
                     const data = await _readBin();
                     _lastRemoteHash = _stateHash(data);
@@ -1634,6 +1627,7 @@ function staffNormalizeProducts(items) {
         }
 
         function fillBusinessForm() {
+            if (!document.getElementById('biz-name')) return;
             document.getElementById('biz-name').value = db_biz.name || '';
             document.getElementById('biz-web').value = db_biz.website || '';
             document.getElementById('biz-phone').value = db_biz.phone || '';
