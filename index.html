@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 
 <html lang="en">
@@ -1406,10 +1405,11 @@ function staffNormalizeProducts(items) {
             const newPin = Math.floor(1000 + Math.random() * 9000).toString();
             s.pin = newPin;
             persist();
-            // Send real email via EmailJS
-            sendRealEmail(s.email, s.name, `Your new ERP PIN is: ${newPin}`, 'PIN Recovery');
-            showToast(`New PIN sent to ${s.email}`, 'success');
+            // Show the new PIN directly on screen
             showLogin();
+            setTimeout(() => {
+                alert(`PIN Recovery\n\nHello ${s.name},\nYour new PIN is:\n\n${newPin}\n\nPlease write it down and keep it safe.`);
+            }, 300);
         }
 
         // ===================== ONLINE / OFFLINE PRESENCE =====================
@@ -1438,98 +1438,6 @@ function staffNormalizeProducts(items) {
             attachPresenceListener();
         }
 
-        // ===================== REAL EMAIL (EmailJS) =====================
-        // ─────────────────────────────────────────────────────────────────
-        // STEP-BY-STEP SETUP (free, 200 emails/month):
-        //
-        // 1. Go to https://www.emailjs.com → Sign Up free
-        // 2. Dashboard → Email Services → Add New Service
-        //    → Choose Gmail (or any provider) → Connect your email account
-        //    → Copy the SERVICE ID (looks like: service_abc123)
-        //    → Paste it as EMAILJS_SERVICE_ID below
-        //
-        // 3. Dashboard → Email Templates → Create New Template
-        //    → Set Subject: "Your PIN for {{from_name}}"
-        //    → Set Body (paste exactly):
-        //       Hi {{to_name}},
-        //
-        //       {{message}}
-        //
-        //       — {{from_name}} Team
-        //    → Click Save → Copy the TEMPLATE ID (looks like: template_abc123)
-        //    → Paste it as EMAILJS_TEMPLATE_ID below
-        //
-        // 4. Dashboard → Account → General → Public Key
-        //    → Copy it (looks like: abc123XYZxyz)
-        //    → Paste it as EMAILJS_PUBLIC_KEY below
-        //
-        // 5. Save file → push to GitHub → done. Real emails will be sent.
-        // ─────────────────────────────────────────────────────────────────
-
-        const EMAILJS_SERVICE_ID  = 'service_6221vb8';   // e.g. 'service_abc123'
-        const EMAILJS_TEMPLATE_ID = 'template_9m0p6dc';  // e.g. 'template_abc123'
-        const EMAILJS_PUBLIC_KEY  = 'Vcl_kQ4xA2IDW5Im3';   // e.g. 'abc123XYZxyz'
-
-        // Load EmailJS SDK once
-        (function loadEmailJS() {
-            const s = document.createElement('script');
-            s.src = 'https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js';
-            s.onload = () => {
-                try {
-                    if (!EMAILJS_PUBLIC_KEY.startsWith('YOUR_')) {
-                        emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
-                        console.info('[EmailJS] Initialised ✅');
-                    }
-                } catch(e) { console.warn('[EmailJS] Init failed:', e); }
-            };
-            document.head.appendChild(s);
-        })();
-
-        async function sendRealEmail(toEmail, toName, message, subject) {
-            if (!toEmail) return;
-
-            // Check credentials are configured
-            if (EMAILJS_SERVICE_ID.startsWith('YOUR_') ||
-                EMAILJS_TEMPLATE_ID.startsWith('YOUR_') ||
-                EMAILJS_PUBLIC_KEY.startsWith('YOUR_')) {
-                // Not configured — show the PIN on screen so staff can still log in
-                showToast(`📧 Email not configured. PIN for ${toName}: ${message}`, 'warning');
-                console.warn('[EmailJS] Credentials not set. PIN:', message);
-                return;
-            }
-
-            // Wait up to 3s for SDK to load
-            let attempts = 0;
-            while (!window.emailjs && attempts++ < 6) {
-                await new Promise(r => setTimeout(r, 500));
-            }
-
-            if (!window.emailjs) {
-                showToast(`Could not load email service. PIN: ${message}`, 'warning');
-                return;
-            }
-
-            try {
-                await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
-                    to_email:  toEmail,
-                    to_name:   toName,
-                    subject:   subject,
-                    message:   message,
-                    from_name: db_biz.name || 'CMDA-NAUTH ERP'
-                });
-                showToast(`✅ PIN sent to ${toEmail}`, 'success');
-            } catch (err) {
-                // Show PIN on screen as fallback so staff is never locked out
-                const pin = (message.match(/\d{4}/) || [''])[0];
-                showToast(`Email failed. Show this PIN to ${toName}: ${pin}`, 'error');
-                console.error('[EmailJS] Send failed:', err);
-            }
-        }
-
-        function sendStaffWelcomeEmail(staff) {
-            const msg = `Welcome to ${db_biz.name || 'the ERP System'}, ${staff.name}!\n\nYour login PIN is: ${staff.pin}\nRole: ${staff.role}\n\nPlease keep your PIN confidential.`;
-            sendRealEmail(staff.email, staff.name, msg, 'Welcome - Your ERP Access Details');
-        }
 
         // ===================== PRODUCT VARIANT ANALYTICS =====================
         function viewVariantAnalytics(productName) {
@@ -2355,7 +2263,7 @@ function staffNormalizeProducts(items) {
             if (!name || !pin) return showToast('Name and PIN required.', 'error');
             const payload = { name, email: document.getElementById('s-email').value.trim(), phone: document.getElementById('s-phone').value.trim(), unit: document.getElementById('s-unit').value.trim(), pin, role: document.getElementById('s-role').value, status: statusVal, salesCount: 0 };
 
-            if (editId) { const idx = db_staff.findIndex(x => x.id == editId); if (idx === 0) payload.status = 'active'; db_staff[idx] = { ...db_staff[idx], ...payload, salesCount: db_staff[idx].salesCount || 0 }; } else { const newStaff = { id: Date.now(), ...payload }; db_staff.push(newStaff); if (newStaff.email) sendStaffWelcomeEmail(newStaff); }
+            if (editId) { const idx = db_staff.findIndex(x => x.id == editId); if (idx === 0) payload.status = 'active'; db_staff[idx] = { ...db_staff[idx], ...payload, salesCount: db_staff[idx].salesCount || 0 }; } else { const newStaff = { id: Date.now(), ...payload }; db_staff.push(newStaff); // welcome email removed }
             persist(); renderStaff(); closeModals(); showToast('Staff updated.');
         }
 
