@@ -1355,10 +1355,10 @@ function staffNormalizeProducts(items) {
         const PRESENCE_HEARTBEAT_MS = 25000;  // write every 25s
         const PRESENCE_STALE_MS     = 60000;  // offline if older than 60s
 
-        // ── write a single heartbeat tick ─────────────────────────────────────
-        async function _writeHeartbeat(staffId, isOnline) {
+        // ── write a single heartbeat tick (just a timestamp — age = truth) ──
+        async function _writeHeartbeat(staffId) {
             if (!_binId || !staffId) return;
-            const payload = { staffId: String(staffId), online: isOnline, ts: Date.now() };
+            const payload = { staffId: String(staffId), ts: Date.now() };
             try {
                 await fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
                     method: 'PUT',
@@ -1368,11 +1368,11 @@ function staffNormalizeProducts(items) {
             } catch(e) { /* silent */ }
         }
 
-        // ── synchronous offline mark via fetch keepalive (works on page close) ─
+        // ── mark offline: write a timestamp far in the past so age > STALE ───
         function _markOfflineSync(staffId) {
             if (!_binId || !staffId) return;
-            const payload = JSON.stringify({ staffId: String(staffId), online: false, ts: Date.now() - PRESENCE_STALE_MS - 1 });
-            // keepalive: browser completes this fetch even after page unloads
+            // ts = 0 means age = now which is always > STALE_MS → instantly offline
+            const payload = JSON.stringify({ staffId: String(staffId), ts: 0 });
             fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1391,12 +1391,14 @@ function staffNormalizeProducts(items) {
                 const now = Date.now();
                 db_staff.forEach(s => {
                     const p = presence && presence[String(s.id)];
-                    if (p) {
-                        const age = now - (p.ts || 0);
-                        s.online   = p.online === true && age < PRESENCE_STALE_MS;
-                        s.lastSeen = p.ts || s.lastSeen;
+                    // ONLY the timestamp age decides online status — no stored boolean
+                    if (p && p.ts) {
+                        const age = now - p.ts;
+                        s.online   = age < PRESENCE_STALE_MS;
+                        s.lastSeen = p.ts;
                     } else {
-                        s.online = false; // no presence record → offline
+                        s.online   = false;
+                        // keep existing lastSeen if any
                     }
                 });
             } catch(e) { /* silent */ }
@@ -1406,7 +1408,7 @@ function staffNormalizeProducts(items) {
         function startPresenceHeartbeat() {
             if (window._presenceInterval) clearInterval(window._presenceInterval);
             window._presenceInterval = setInterval(() => {
-                if (user) _writeHeartbeat(user.id, true);
+                if (user) _writeHeartbeat(user.id);
             }, PRESENCE_HEARTBEAT_MS);
 
             // keepalive fetch on tab close / refresh / navigation away
@@ -1420,7 +1422,7 @@ function staffNormalizeProducts(items) {
                 if (document.visibilityState === 'hidden') {
                     _markOfflineSync(user.id);
                 } else {
-                    _writeHeartbeat(user.id, true);
+                    _writeHeartbeat(user.id);
                 }
             });
 
@@ -1451,7 +1453,11 @@ function staffNormalizeProducts(items) {
                 db_staff[idx].online   = isOnline;
                 db_staff[idx].lastSeen = Date.now();
             }
-            await _writeHeartbeat(staffId, isOnline);
+            if (isOnline) {
+                await _writeHeartbeat(staffId);
+            } else {
+                _markOfflineSync(staffId);
+            }
         }
 
         // ── beaconOffline: alias for page-close path ──────────────────────────
@@ -1752,7 +1758,8 @@ function staffNormalizeProducts(items) {
 
             // Set staff online status immediately on login
             setStaffOnlineStatus(user.id, true);
-            cloudSetPresence(user.id, true);
+            _writeHeartbeat(user.id);
+            _syncPresenceFromCloud().then(() => renderStaff());
 
 
             const isAdmin = user.role === 'admin';
@@ -1806,7 +1813,11 @@ function staffNormalizeProducts(items) {
 
         function persistLocalOnly() {
             localStorage.setItem('v72_biz', JSON.stringify(db_biz));
-            localStorage.setItem('v72_staff', JSON.stringify(db_staff));
+            // Strip online/lastSeen — never persist presence to localStorage
+            localStorage.setItem('v72_staff', JSON.stringify(db_staff.map(s => {
+                const { online, lastSeen, ...rest } = s;
+                return rest;
+            })));
             localStorage.setItem('v72_inv', JSON.stringify(db_inv));
             localStorage.setItem('v72_acc', JSON.stringify(db_acc));
             localStorage.setItem('v72_purch', JSON.stringify(db_purch));
@@ -2587,8 +2598,15 @@ function staffNormalizeProducts(items) {
                 
                 // Online/offline
                 const isOnline = !!s.online;
-                const lastSeenStr = s.lastSeen ? `Last seen: ${new Date(s.lastSeen).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}` : 'Never';
-                const onlineHtml = `<span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>${isOnline ? '<span class="online-tag">Online</span>' : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">${lastSeenStr}</small>`}`;
+                const relTime = s.lastSeen ? (() => {
+                    const mins = Math.floor((Date.now() - s.lastSeen) / 60000);
+                    if (mins < 1) return 'just now';
+                    if (mins < 60) return `${mins}m ago`;
+                    const hrs = Math.floor(mins / 60);
+                    if (hrs < 24) return `${hrs}h ago`;
+                    return new Date(s.lastSeen).toLocaleDateString();
+                })() : 'never';
+                const onlineHtml = `<span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>${isOnline ? '<span class="online-tag">Online</span>' : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">Last seen: ${relTime}</small>`}`;
 
                 // Calculate Staff Performance
                 const staffSales = db_sales.filter(sale => sale.cashier === s.name);
