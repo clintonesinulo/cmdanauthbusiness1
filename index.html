@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 
 <html lang="en">
@@ -614,6 +613,23 @@
 <div class="mini" id="receipts-header-info">View past transactions and reprint thermal receipts.</div>
 </div>
 </div>
+<!-- Pending Credit Payments Panel -->
+<div class="card" style="margin-bottom:20px; border-left: 4px solid #f39c12;" id="pending-panel">
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+<div>
+<h3 style="color:#d35400;">⏳ Pending Credit Payments</h3>
+<div class="mini">Credit sales waiting for admin approval. Not reflected in accounts until approved.</div>
+</div>
+<span id="pending-count-badge" style="background:#f39c12; color:white; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:bold;"></span>
+</div>
+<div class="table-responsive">
+<table>
+<thead><tr><th>Invoice #</th><th>Date</th><th>Customer</th><th>Cashier</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+<tbody id="pending-table"></tbody>
+</table>
+</div>
+</div>
+<h3 style="margin-bottom:12px;">Confirmed Sales</h3>
 <div class="table-responsive">
 <table>
 <thead><tr><th>Invoice #</th><th>Date</th><th>Customer</th><th>Cashier</th><th>Total Amount</th><th>Action</th></tr></thead>
@@ -953,6 +969,7 @@ function staffNormalizeProducts(items) {
                 purch:   db_purch,
                 chat:    db_chat,
                 finance: db_finance,
+                pending: db_pending,
                 _ts:     Date.now()
             };
         }
@@ -967,12 +984,13 @@ function staffNormalizeProducts(items) {
             if (data.purch   !== undefined) db_purch   = data.purch;
             if (data.chat    !== undefined) db_chat    = data.chat;
             if (data.finance !== undefined) db_finance = data.finance;
+            if (data.pending !== undefined) db_pending = data.pending;
         }
 
         function _stateHash(data) {
             return JSON.stringify({ biz: data.biz, staff: data.staff, inv: data.inv,
                                     sales: data.sales, acc: data.acc, purch: data.purch,
-                                    chat: data.chat, finance: data.finance });
+                                    chat: data.chat, finance: data.finance, pending: data.pending });
         }
 
         // ── Firebase RTDB REST: create store ──────────────────────────────────
@@ -1028,7 +1046,8 @@ function staffNormalizeProducts(items) {
                 staff: JSON.stringify(db_staff), inv: JSON.stringify(db_inv),
                 sales: JSON.stringify(db_sales), acc: JSON.stringify(db_acc),
                 purch: JSON.stringify(db_purch), chat: JSON.stringify(db_chat),
-                finance: db_finance, biz: JSON.stringify(db_biz)
+                finance: db_finance, biz: JSON.stringify(db_biz),
+                pending: JSON.stringify(db_pending)
             };
 
             _unpackState(data);
@@ -1055,6 +1074,7 @@ function staffNormalizeProducts(items) {
             if (JSON.stringify(db_acc)   !== prev.acc)   { renderAccounting(); }
             if (JSON.stringify(db_purch) !== prev.purch) { renderProcurement(); }
             if (JSON.stringify(db_chat)  !== prev.chat)  { renderChat(); }
+            if (JSON.stringify(db_pending) !== prev.pending) { renderPendingPayments(); renderReceipts(); }
             if (db_finance !== prev.finance) {
                 document.getElementById('account-balance-nav').innerText = db_finance.toLocaleString();
             }
@@ -1326,6 +1346,7 @@ function staffNormalizeProducts(items) {
         let db_chat    = JSON.parse(localStorage.getItem('v72_chat'))    || [];
         let db_sales   = JSON.parse(localStorage.getItem('v72_sales'))   || [];
         let db_finance = parseFloat(localStorage.getItem('v72_finance')) || 0.0;
+        let db_pending = JSON.parse(localStorage.getItem('v72_pending')) || [];
 
         let user = null;
         let cart = [];
@@ -1366,6 +1387,12 @@ function staffNormalizeProducts(items) {
             user = found;
             document.getElementById('login-screen').style.display = 'none';
             showToast(`Welcome back, ${user.name}!`);
+            // Mark online immediately on login
+            const idx = db_staff.findIndex(x => x.id === user.id);
+            if (idx > -1) {
+                db_staff[idx].online = true;
+                db_staff[idx].lastSeen = Date.now();
+            }
             initUI();
         }
 
@@ -1613,8 +1640,9 @@ function staffNormalizeProducts(items) {
             // Admin-only: Update Balance button
             document.getElementById('btn-update-balance').style.display = (user.role === 'admin') ? 'inline-block' : 'none';
 
-            // Set staff online status
+            // Set staff online status immediately on login
             setStaffOnlineStatus(user.id, true);
+            cloudSetPresence(user.id, true);
 
 
             const isAdmin = user.role === 'admin';
@@ -1644,6 +1672,7 @@ function staffNormalizeProducts(items) {
             renderAccounting();
             renderStaff();
             renderReceipts();
+            renderPendingPayments();
             renderChat();
             if (chatInterval) clearInterval(chatInterval);
             chatInterval = setInterval(renderChat, 2000);
@@ -1674,6 +1703,7 @@ function staffNormalizeProducts(items) {
             localStorage.setItem('v72_chat', JSON.stringify(db_chat));
             localStorage.setItem('v72_sales', JSON.stringify(db_sales));
             localStorage.setItem('v72_finance', db_finance.toString());
+            localStorage.setItem('v72_pending', JSON.stringify(db_pending));
             document.getElementById('account-balance-nav').innerText = `${db_finance.toLocaleString()}`;
         }
 
@@ -2024,7 +2054,7 @@ function staffNormalizeProducts(items) {
             const timestamp = Date.now();
             const receiptDateTime = new Date(timestamp).toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' });
 
-            // Deduct stock
+            // Deduct stock regardless of payment method
             saleItems.forEach(c => {
                 const idx = db_inv.findIndex(x => x.id == c.id);
                 if (idx > -1) { db_inv[idx].stock -= c.qty; db_inv[idx].sales = (db_inv[idx].sales || 0) + c.qty; }
@@ -2040,27 +2070,41 @@ function staffNormalizeProducts(items) {
                 subtotal, discount: disc, total: finalTotal, profit
             };
 
-            db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
-            db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
-            db_finance += finalTotal;
-
-            const sIdx = db_staff.findIndex(x => x.id == user.id);
-            if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
-
-            persist();
-
-            // Auto-clear basket immediately
-            cart = [];
-            document.getElementById('cust-name').value = '';
-            document.getElementById('pos-discount').value = '0';
-            calculateTotal();
-
-            // Re-render other tabs
-            renderPOS(); renderAccounting(); renderStaff(); renderReceipts();
-
-            // Show receipt immediately
-            printThermalReceipt(currentInvoice);
-            showToast(`✅ ${paymentMethod} payment recorded — receipt printing!`, 'success');
+            if (paymentMethod === 'Credit') {
+                // ── CREDIT: store in pending, do NOT touch db_acc or db_finance ──
+                db_pending.push({
+                    inv: invNum, customer: cust, cashier, timestamp,
+                    date: new Date(timestamp).toLocaleDateString(),
+                    total: finalTotal, profit, cost: totalCost, paymentMethod,
+                    items: saleItems.map(c => ({ id: c.id, qty: c.qty })),
+                    subtotal, discount: disc, status: 'pending'
+                });
+                const sIdx = db_staff.findIndex(x => x.id == user.id);
+                if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
+                persist();
+                cart = [];
+                document.getElementById('cust-name').value = '';
+                document.getElementById('pos-discount').value = '0';
+                calculateTotal();
+                renderPOS(); renderStaff(); renderReceipts(); renderPendingPayments();
+                printThermalReceipt(currentInvoice);
+                showToast(`⏳ Credit sale recorded — PENDING approval. Receipt printing!`, 'warning');
+            } else {
+                // ── CASH / CARD: post immediately ──
+                db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
+                db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
+                db_finance += finalTotal;
+                const sIdx = db_staff.findIndex(x => x.id == user.id);
+                if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
+                persist();
+                cart = [];
+                document.getElementById('cust-name').value = '';
+                document.getElementById('pos-discount').value = '0';
+                calculateTotal();
+                renderPOS(); renderAccounting(); renderStaff(); renderReceipts();
+                printThermalReceipt(currentInvoice);
+                showToast(`✅ ${paymentMethod} payment recorded — receipt printing!`, 'success');
+            }
             stopScanner();
         }
 
@@ -2082,9 +2126,14 @@ function staffNormalizeProducts(items) {
                     <td>${escapeHtml(s.customer)}</td>
                     <td>${escapeHtml(s.cashier)}</td>
                     <td style="font-weight:bold; color:var(--odoo-teal);">₦${s.total.toLocaleString()}</td>
-                    <td><button class="btn-odoo btn-teal" style="padding:6px 12px; font-size:12px;" onclick="reprintReceipt('${s.inv}')">Print Receipt</button></td>
+                    <td>
+                        <button class="btn-odoo btn-teal" style="padding:6px 12px; font-size:12px;" onclick="reprintReceipt('${s.inv}')">Print Receipt</button>
+                        ${isAdmin ? `<button class="btn-odoo btn-danger" style="padding:6px 12px; font-size:12px; margin-left:4px;" onclick="reversePayment('${s.inv}')">🔁 Reverse</button>` : ''}
+                    </td>
                 </tr>
             `).join('');
+            // Render pending payments panel too
+            renderPendingPayments();
         }
 
         function reprintReceipt(invNo) {
@@ -2102,6 +2151,98 @@ function staffNormalizeProducts(items) {
             } else {
                 showToast('Invoice not found', 'error');
             }
+        }
+
+        // ===================== PENDING CREDIT PAYMENTS =====================
+        function renderPendingPayments() {
+            const tbody = document.getElementById('pending-table');
+            if (!tbody) return;
+            const isAdmin = user && user.role === 'admin';
+            const badge = document.getElementById('pending-count-badge');
+            if (badge) badge.textContent = db_pending.length ? `${db_pending.length} pending` : '';
+            if (!db_pending.length) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#7f8c8d; padding:20px;">No pending credit payments.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = db_pending.slice().reverse().map(p => `
+                <tr style="background:#fffbea;">
+                    <td style="font-family:monospace;">${p.inv}</td>
+                    <td>${p.date}</td>
+                    <td>${escapeHtml(p.customer)}</td>
+                    <td>${escapeHtml(p.cashier)}</td>
+                    <td style="font-weight:bold; color:#8e44ad;">₦${p.total.toLocaleString()}</td>
+                    <td><span class="badge badge-suspended">PENDING</span></td>
+                    <td>
+                        ${isAdmin ? `<button class="btn-odoo btn-teal" style="padding:5px 10px; font-size:11px;" onclick="approvePendingPayment('${p.inv}')">✅ Approve</button>
+                        <button class="btn-odoo btn-danger" style="padding:5px 10px; font-size:11px; margin-left:4px;" onclick="rejectPendingPayment('${p.inv}')">❌ Reject</button>` : '<span style="color:#7f8c8d; font-size:12px;">Admin only</span>'}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function approvePendingPayment(invNo) {
+            if (!user || user.role !== 'admin') return showToast('Admin access required.', 'error');
+            const idx = db_pending.findIndex(p => p.inv === invNo);
+            if (idx === -1) return showToast('Pending record not found.', 'error');
+            showConfirm(`Approve credit payment ${invNo} and post to accounts?`, async () => {
+                const p = db_pending[idx];
+                // Move to confirmed records
+                db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp, date: p.date, total: p.total, profit: p.profit, cost: p.cost, paymentMethod: 'Credit (Approved)' });
+                db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp, date: p.date, total: p.total, profit: p.profit, cost: p.cost, paymentMethod: 'Credit (Approved)', items: p.items });
+                db_finance += p.total;
+                db_pending.splice(idx, 1);
+                await persist();
+                renderPendingPayments(); renderReceipts(); renderAccounting();
+                showToast(`✅ Credit payment ${invNo} approved and posted!`, 'success');
+            });
+        }
+
+        async function rejectPendingPayment(invNo) {
+            if (!user || user.role !== 'admin') return showToast('Admin access required.', 'error');
+            const idx = db_pending.findIndex(p => p.inv === invNo);
+            if (idx === -1) return showToast('Pending record not found.', 'error');
+            showConfirm(`Reject and reverse credit sale ${invNo}? Stock will be restored.`, async () => {
+                const p = db_pending[idx];
+                // Restore stock
+                (p.items || []).forEach(it => {
+                    const iIdx = db_inv.findIndex(x => x.id == it.id);
+                    if (iIdx > -1) {
+                        db_inv[iIdx].stock += it.qty;
+                        db_inv[iIdx].sales = Math.max(0, (db_inv[iIdx].sales || 0) - it.qty);
+                    }
+                });
+                db_pending.splice(idx, 1);
+                await persist();
+                renderPendingPayments(); renderInventory(); renderPOS();
+                showToast(`❌ Credit sale ${invNo} rejected — stock restored.`, 'warning');
+            });
+        }
+
+        // ===================== PAYMENT REVERSAL (Admin only) =====================
+        function reversePayment(invNo) {
+            if (!user || user.role !== 'admin') return showToast('Admin access required.', 'error');
+            showConfirm(`⚠️ Reverse payment ${invNo}? This will restore stock, remove the sale, and deduct revenue.`, async () => {
+                const sIdx = db_sales.findIndex(x => x.inv === invNo);
+                const aIdx = db_acc.findIndex(x => x.inv === invNo);
+                if (sIdx === -1 && aIdx === -1) return showToast('Sale record not found.', 'error');
+                const sale = db_sales[sIdx] || db_acc[aIdx];
+                // Restore stock
+                (sale.items || []).forEach(it => {
+                    const iIdx = db_inv.findIndex(x => x.id == it.id);
+                    if (iIdx > -1) {
+                        db_inv[iIdx].stock += it.qty;
+                        db_inv[iIdx].sales = Math.max(0, (db_inv[iIdx].sales || 0) - it.qty);
+                    }
+                });
+                // Reverse finance
+                db_finance = Math.max(0, db_finance - (sale.total || 0));
+                // Remove from records
+                if (sIdx > -1) db_sales.splice(sIdx, 1);
+                if (aIdx > -1) db_acc.splice(aIdx, 1);
+                await persist();
+                renderReceipts(); renderAccounting(); renderInventory(); renderPOS();
+                showToast(`🔁 Payment ${invNo} reversed. Stock restored, revenue adjusted.`, 'success');
+            });
         }
 
         // ===================== INVENTORY =====================
@@ -2217,7 +2358,7 @@ function staffNormalizeProducts(items) {
             const filteredAcc = filterAccounting();
             const ledger = document.getElementById('accounting-table');
             if (ledger) {
-                ledger.innerHTML = filteredAcc.slice().reverse().map(a => `<tr><td style="font-family:monospace;">${a.inv}</td><td>${escapeHtml(a.customer)}</td><td>${escapeHtml(a.cashier)}</td><td>${new Date(a.timestamp).toLocaleString()}</td><td style="font-weight:bold; color:var(--odoo-teal);">₦${a.total.toLocaleString()}</td><td style="font-weight:bold; color:${a.profit >= 0 ? '#27ae60' : '#c0392b'};">₦${a.profit.toLocaleString()}</td><td><button class="btn-odoo" style="padding:6px 10px; font-size:12px;" onclick="reprintReceipt('${a.inv}')">Print</button></td></tr>`).join('');
+                ledger.innerHTML = filteredAcc.slice().reverse().map(a => `<tr><td style="font-family:monospace;">${a.inv}</td><td>${escapeHtml(a.customer)}</td><td>${escapeHtml(a.cashier)}</td><td>${new Date(a.timestamp).toLocaleString()}</td><td style="font-weight:bold; color:var(--odoo-teal);">₦${a.total.toLocaleString()}</td><td style="font-weight:bold; color:${a.profit >= 0 ? '#27ae60' : '#c0392b'};">₦${a.profit.toLocaleString()}</td><td><button class="btn-odoo" style="padding:6px 10px; font-size:12px;" onclick="reprintReceipt('${a.inv}')">Print</button>${user && user.role === 'admin' ? ` <button class="btn-odoo btn-danger" style="padding:6px 10px; font-size:12px;" onclick="reversePayment('${a.inv}')">🔁</button>` : ''}</td></tr>`).join('');
             }
 
             const rev = filteredAcc.reduce((sum, a) => sum + (+a.total || 0), 0);
@@ -2442,8 +2583,15 @@ function staffNormalizeProducts(items) {
         function saveBusinessInfo() { db_biz = { name: document.getElementById('biz-name').value.trim(), website: document.getElementById('biz-web').value.trim(), phone: document.getElementById('biz-phone').value.trim(), address: document.getElementById('biz-addr').value.trim(), social: document.getElementById('biz-social').value.trim() }; if (!db_biz.name) return showToast('Business name is required.', 'error'); persist(); fillBusinessForm(); document.getElementById('nav-title').innerText = db_biz.name.toUpperCase(); showToast('Profile Updated!'); }
         function masterWipe() { if (document.getElementById('wipe-code').value === '147258') { if (confirm('CRITICAL: This will delete ALL sales, inventory, analytics, chats, and purchases. Proceed?')) { localStorage.clear(); location.reload(); } } else { showToast('Incorrect Code', 'error'); } }
         function closeModals() { document.querySelectorAll('[id^="modal-"]').forEach(m => m.style.display = 'none'); }
-        function logout() { 
-            if (user) setStaffOnlineStatus(user.id, false);
+        async function logout() { 
+            if (user) {
+                const idx = db_staff.findIndex(x => x.id === user.id);
+                if (idx > -1) {
+                    db_staff[idx].online = false;
+                    db_staff[idx].lastSeen = Date.now();
+                }
+                await cloudSetPresence(user.id, false);
+            }
             location.reload(); 
         }
         function escapeHtml(str) { return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
