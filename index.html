@@ -1064,7 +1064,7 @@ function staffNormalizeProducts(items) {
                 const me = db_staff.find(s => s.id === user.id);
                 if (me && me.status !== 'active') {
                     showToast(`Your account has been ${me.status}. You have been logged out.`, 'error');
-                    setTimeout(() => { setStaffOnlineStatus(user.id, false); location.reload(); }, 2500);
+                    setTimeout(() => { beaconOffline(user.id); location.reload(); }, 2500);
                     return;
                 }
                 renderStaff();
@@ -1324,18 +1324,88 @@ function staffNormalizeProducts(items) {
             await cloudSave();
         }
 
-        // ── presence: stored inside staff record, synced via normal cloudSave ──
+        // ── presence: written directly to a fast /presence node, no debounce ──
         async function cloudSetPresence(staffId, isOnline) {
+            // 1. Update local state
             const idx = db_staff.findIndex(s => String(s.id) === String(staffId));
             if (idx > -1) {
                 db_staff[idx].online   = isOnline;
                 db_staff[idx].lastSeen = Date.now();
             }
-            await cloudSave();
+            persistLocalOnly();
+            // 2. Write directly to a dedicated presence node (fast, no debounce)
+            if (_binId) {
+                const payload = { online: isOnline, lastSeen: Date.now(), staffId: String(staffId) };
+                try {
+                    await fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                } catch(e) { /* silent — will reconcile on next poll */ }
+            }
+            // 3. Also trigger a full save so other data stays in sync
+            cloudSave();
         }
 
-        // ── presence listener: no-op (presence now rides the poll cycle) ───────
-        function attachPresenceListener() { /* presence handled via poll */ }
+        // ── beacon offline: uses sendBeacon so it survives page close ────────
+        function beaconOffline(staffId) {
+            if (!_binId || !staffId) return;
+            const payload = JSON.stringify({ online: false, lastSeen: Date.now(), staffId: String(staffId) });
+            // sendBeacon guarantees delivery even on unload
+            navigator.sendBeacon(
+                `${RTDB}/stores/${_binId}/presence/${staffId}.json?x-http-method-override=PUT`,
+                new Blob([payload], { type: 'application/json' })
+            );
+            // Also patch the staff record in the main store via beacon
+            const staffIdx = db_staff.findIndex(s => String(s.id) === String(staffId));
+            if (staffIdx > -1) {
+                db_staff[staffIdx].online = false;
+                db_staff[staffIdx].lastSeen = Date.now();
+            }
+            persistLocalOnly();
+        }
+
+        // ── merge presence node into staff records on each poll ───────────────
+        async function _syncPresenceFromCloud() {
+            if (!_binId) return;
+            try {
+                const res = await fetch(`${RTDB}/stores/${_binId}/presence.json`);
+                if (!res.ok) return;
+                const presence = await res.json();
+                if (!presence) return;
+                const STALE_MS = 2 * 60 * 1000; // 2 minutes = stale
+                const now = Date.now();
+                Object.values(presence).forEach(p => {
+                    const idx = db_staff.findIndex(s => String(s.id) === String(p.staffId));
+                    if (idx > -1) {
+                        const age = now - (p.lastSeen || 0);
+                        // If marked online but heartbeat is stale, treat as offline
+                        const effectiveOnline = p.online && age < STALE_MS;
+                        db_staff[idx].online   = effectiveOnline;
+                        db_staff[idx].lastSeen = p.lastSeen || db_staff[idx].lastSeen;
+                    }
+                });
+                persistLocalOnly();
+            } catch(e) { /* silent */ }
+        }
+
+        // ── presence listener: polls presence node every 10s ─────────────────
+        function attachPresenceListener() {
+            if (window._presenceListenerInterval) clearInterval(window._presenceListenerInterval);
+            window._presenceListenerInterval = setInterval(async () => {
+                await _syncPresenceFromCloud();
+                if (document.getElementById('staff-table')) renderStaff();
+                // Update chat online list too
+                const onlineList = document.getElementById('chat-online-list');
+                if (onlineList) {
+                    const onlineStaff = db_staff.filter(s => s.online && s.status === 'active');
+                    onlineList.innerHTML = onlineStaff.length
+                        ? onlineStaff.map(s => `<span class="status-dot status-online"></span>${escapeHtml(s.name)}`).join(' &nbsp; ')
+                        : 'No one online';
+                }
+            }, 10000);
+        }
 
         // ===================== DATABASE & STATE =====================
         let db_biz     = JSON.parse(localStorage.getItem('v72_biz'))     || { name: "", website: "", phone: "", address: "", social: "" };
@@ -1433,15 +1503,27 @@ function staffNormalizeProducts(items) {
 
         function startPresenceHeartbeat() {
             if (window._presenceInterval) clearInterval(window._presenceInterval);
-            // Heartbeat every 60s
+            // Heartbeat every 30s so stale detection (2min) catches missed beats quickly
             window._presenceInterval = setInterval(() => {
                 if (user) cloudSetPresence(user.id, true);
-            }, 60000);
-            // Mark offline on tab close
+            }, 30000);
+
+            // Use sendBeacon on page close — guaranteed to fire even on hard close/refresh
             window.addEventListener('beforeunload', () => {
-                if (user) cloudSetPresence(user.id, false);
+                if (user) beaconOffline(user.id);
             });
-            // Attach Firestore presence listener so all tabs see each other
+
+            // Also catch tab being hidden (phone lock screen, switching apps)
+            document.addEventListener('visibilitychange', () => {
+                if (!user) return;
+                if (document.visibilityState === 'hidden') {
+                    beaconOffline(user.id);
+                } else {
+                    cloudSetPresence(user.id, true);
+                }
+            });
+
+            // Attach presence listener (polls /presence node every 10s)
             attachPresenceListener();
         }
 
@@ -1676,10 +1758,10 @@ function staffNormalizeProducts(items) {
             renderChat();
             if (chatInterval) clearInterval(chatInterval);
             chatInterval = setInterval(renderChat, 2000);
-            // Refresh staff online status every 15s
+            // Refresh staff online status every 15s using presence node
             if (window._staffRefreshInterval) clearInterval(window._staffRefreshInterval);
-            window._staffRefreshInterval = setInterval(() => {
-                db_staff = JSON.parse(localStorage.getItem('v72_staff')) || db_staff;
+            window._staffRefreshInterval = setInterval(async () => {
+                await _syncPresenceFromCloud();
                 renderStaff();
             }, 15000);
             startPresenceHeartbeat();
@@ -2441,7 +2523,7 @@ function staffNormalizeProducts(items) {
             // If the suspended staff is currently logged in on this device
             if (user && user.id === id && db_staff[idx].status !== 'active') {
                 showToast('Your account has been suspended. Logging out…', 'error');
-                setTimeout(() => { setStaffOnlineStatus(user.id, false); location.reload(); }, 2500);
+                setTimeout(() => { beaconOffline(user.id); location.reload(); }, 2500);
             }
         }
         function softDeleteStaff(id) {
@@ -2454,7 +2536,7 @@ function staffNormalizeProducts(items) {
                     showToast('Staff deleted.');
                     if (user && user.id === id) {
                         showToast('Your account was deleted. Logging out…', 'error');
-                        setTimeout(() => { setStaffOnlineStatus(user.id, false); location.reload(); }, 2500);
+                        setTimeout(() => { beaconOffline(user.id); location.reload(); }, 2500);
                     }
                 }
             });
@@ -2585,12 +2667,7 @@ function staffNormalizeProducts(items) {
         function closeModals() { document.querySelectorAll('[id^="modal-"]').forEach(m => m.style.display = 'none'); }
         async function logout() { 
             if (user) {
-                const idx = db_staff.findIndex(x => x.id === user.id);
-                if (idx > -1) {
-                    db_staff[idx].online = false;
-                    db_staff[idx].lastSeen = Date.now();
-                }
-                await cloudSetPresence(user.id, false);
+                beaconOffline(user.id);
             }
             location.reload(); 
         }
