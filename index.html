@@ -2427,13 +2427,39 @@ function staffNormalizeProducts(items) {
             const qty = parseInt(document.getElementById('buy-qty').value, 10);
             const cost = parseFloat(document.getElementById('buy-cost').value);
             if (!pid || !qty || !cost) return showToast('Fill all fields', 'error');
-            const totalCost = qty * cost;
+            const unitCost = totalcost / qty;
             if (totalCost > db_finance) return showToast('Insufficient Balance!', 'error');
             const pIdx = db_inv.findIndex(x => x.id == pid);
             if (pIdx < 0) return showToast('Product not found.', 'error');
             db_finance -= totalCost; db_inv[pIdx].stock += qty; db_inv[pIdx].cost = cost;
             db_purch.push({ date: new Date().toLocaleDateString(), name: db_inv[pIdx].name, qty, unitCost: cost, timestamp: Date.now() });
             persist(); renderProcurement(); renderInventory(); renderPOS(); renderAccounting(); showToast(`Restocked ${qty} items.`);
+        }
+        // ===================== PROCUREMENT REVERSAL (Admin only) =====================
+        function reverseProcurement(invNo) {
+            if (!user || user.role !== 'admin') return showToast('Admin access required.', 'error');
+            showConfirm(`⚠️ Reverse payment ${invNo}? This will restore stock, remove the purchase, and add revenue.`, async () => {
+                const pIdx = db_purchase.findIndex(x => x.inv === invNo);
+                const aIdx = db_acc.findIndex(x => x.inv === invNo);
+                if (pIdx === -1 && aIdx === -1) return showToast('Sale record not found.', 'error');
+                const purchase = db_purchase[pIdx] || db_acc[aIdx];
+                // Restore stock
+                (purchase.items || []).forEach(it => {
+                    const iIdx = db_inv.findIndex(x => x.id == it.id);
+                    if (iIdx > -1) {
+                        db_inv[iIdx].stock += it.qty;
+                        db_inv[iIdx].purchase = Math.max(0, (db_inv[iIdx].purchase || 0) - it.qty);
+                    }
+                });
+                // Reverse finance
+                db_finance = Math.max(0, db_finance - (sale.total || 0));
+                // Remove from records
+                if (pIdx > -1) db_purchase.splice(pIdx, 1);
+                if (aIdx > -1) db_acc.splice(aIdx, 1);
+                await persist();
+                renderReceipts(); renderAccounting(); renderInventory(); renderPOS();
+                showToast(`🔁 Payment ${invNo} reversed. Stock restored, revenue adjusted.`, 'success');
+            });
         }
 
         // ===================== ACCOUNTING / ANALYTICS =====================
