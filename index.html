@@ -661,11 +661,16 @@
 </div>
 <div class="card" style="max-width: 560px;">
 <label>Select Product</label>
-<select id="buy-prod-id"></select>
+<select id="buy-prod-id" onchange="calcUnitCost()"></select>
 <label>Quantity Purchased</label>
-<input id="buy-qty" min="1" placeholder="0" type="number"/>
-<label>Unit Cost Price (₦)</label>
-<input id="buy-cost" min="0" placeholder="How much did you buy 1 for?" type="number"/>
+<input id="buy-qty" min="1" placeholder="e.g. 20" type="number" oninput="calcUnitCost()"/>
+<label>Total Cost Price (&#8358;) <span style="color:#7f8c8d; font-size:12px;">&#8212; total amount spent on this batch</span></label>
+<input id="buy-cost" min="0" placeholder="e.g. 50000 for the whole batch" type="number" oninput="calcUnitCost()"/>
+<div id="unit-cost-preview" style="background:#f0faf9; border:1px solid #b2dfdb; border-radius:8px; padding:10px 14px; margin-bottom:12px; display:none;">
+  <span style="font-size:13px; color:#555;">Unit cost per item: </span>
+  <strong id="unit-cost-value" style="color:var(--odoo-teal); font-size:16px;">&#8358;0</strong>
+  <span style="font-size:12px; color:#7f8c8d; margin-left:8px;">&#8212; cost price will be updated automatically</span>
+</div>
 <button class="btn-odoo btn-teal" onclick="processPurchase()" style="width:100%;">Register Purchase &amp; Restock</button>
 </div>
 <h3>Purchase History</h3>
@@ -1341,82 +1346,75 @@ function staffNormalizeProducts(items) {
         }
 
         // =====================================================================
-        //  PRESENCE SYSTEM
-        //  ─────────────────────────────────────────────────────────────────────
-        //  Presence is stored ONLY in /stores/{id}/presence/{staffId}
-        //  It is NEVER included in the main store blob (_packState / _unpackState)
-        //  so a full cloudSave never clobbers online/offline flags.
-        //
-        //  Each device writes a heartbeat timestamp every 25s.
-        //  Any staff whose heartbeat is older than 60s is considered OFFLINE.
-        //  This means: close tab, refresh, crash, phone off → offline within 60s.
+        //  PRESENCE SYSTEM — TTL heartbeat only, never stored in main blob
+        //  Each logged-in device writes ts to /presence/{staffId} every 20s.
+        //  age > 55s → offline. ts=1 = explicit offline marker.
+        //  persistLocalOnly strips online/lastSeen so localStorage never
+        //  caches a stale "online:true".
         // =====================================================================
 
-        const PRESENCE_HEARTBEAT_MS = 25000;  // write every 25s
-        const PRESENCE_STALE_MS     = 60000;  // offline if older than 60s
+        const PRESENCE_HEARTBEAT_MS = 20000;   // heartbeat every 20 s
+        const PRESENCE_STALE_MS     = 55000;   // offline if heartbeat > 55 s old
 
-        // ── write a single heartbeat tick (just a timestamp — age = truth) ──
         async function _writeHeartbeat(staffId) {
             if (!_binId || !staffId) return;
-            const payload = { staffId: String(staffId), ts: Date.now() };
             try {
                 await fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ staffId: String(staffId), ts: Date.now() })
                 });
-            } catch(e) { /* silent */ }
+            } catch(e) {}
         }
 
-        // ── mark offline: write a timestamp far in the past so age > STALE ───
+        // Write ts=1 (effectively age = now ms >> STALE) so the person is
+        // immediately seen as offline by every poller.  keepalive:true means
+        // the browser sends this even while the page is being destroyed.
         function _markOfflineSync(staffId) {
             if (!_binId || !staffId) return;
-            // ts = 0 means age = now which is always > STALE_MS → instantly offline
-            const payload = JSON.stringify({ staffId: String(staffId), ts: 0 });
             fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: payload,
+                body: JSON.stringify({ staffId: String(staffId), ts: 1 }),
                 keepalive: true
             }).catch(() => {});
         }
 
-        // ── read presence node and compute online/offline per staff ───────────
+        // Read /presence, compute online flag from age alone (no boolean trusted)
         async function _syncPresenceFromCloud() {
             if (!_binId) return;
             try {
                 const res = await fetch(`${RTDB}/stores/${_binId}/presence.json`);
                 if (!res.ok) return;
-                const presence = await res.json();
+                const presence = await res.json() || {};
                 const now = Date.now();
                 db_staff.forEach(s => {
-                    const p = presence && presence[String(s.id)];
-                    // ONLY the timestamp age decides online status — no stored boolean
-                    if (p && p.ts) {
-                        const age = now - p.ts;
-                        s.online   = age < PRESENCE_STALE_MS;
+                    const p = presence[String(s.id)];
+                    if (p && p.ts && p.ts > 1000) {          // ts=1 = explicit offline
+                        s.online   = (now - p.ts) < PRESENCE_STALE_MS;
                         s.lastSeen = p.ts;
                     } else {
-                        s.online   = false;
-                        // keep existing lastSeen if any
+                        s.online = false;
+                        if (p && p.ts && p.ts > 1) s.lastSeen = p.ts;
                     }
                 });
-            } catch(e) { /* silent */ }
+            } catch(e) {}
         }
 
-        // ── start heartbeat loop + unload handler ─────────────────────────────
         function startPresenceHeartbeat() {
             if (window._presenceInterval) clearInterval(window._presenceInterval);
+            // Write heartbeat immediately, then every 20 s
+            if (user) _writeHeartbeat(user.id);
             window._presenceInterval = setInterval(() => {
                 if (user) _writeHeartbeat(user.id);
             }, PRESENCE_HEARTBEAT_MS);
 
-            // keepalive fetch on tab close / refresh / navigation away
+            // Page close / refresh: keepalive offline mark
             window.addEventListener('beforeunload', () => {
                 if (user) _markOfflineSync(user.id);
-            });
+            }, { once: true });
 
-            // Tab hidden (phone lock, switch app) → write stale ts so it looks offline
+            // Tab hidden (phone lock, switch app)
             document.addEventListener('visibilitychange', () => {
                 if (!user) return;
                 if (document.visibilityState === 'hidden') {
@@ -1426,11 +1424,10 @@ function staffNormalizeProducts(items) {
                 }
             });
 
-            // Start polling presence every 10s and re-render staff
             attachPresenceListener();
         }
 
-        // ── poll presence every 10s, update UI ───────────────────────────────
+        // Poll /presence every 8 s and re-render staff + chat list
         function attachPresenceListener() {
             if (window._presenceListenerInterval) clearInterval(window._presenceListenerInterval);
             window._presenceListenerInterval = setInterval(async () => {
@@ -1443,27 +1440,16 @@ function staffNormalizeProducts(items) {
                         ? onlineStaff.map(s => `<span class="status-dot status-online"></span>${escapeHtml(s.name)}`).join(' &nbsp; ')
                         : 'No one online';
                 }
-            }, 10000);
+            }, 8000);
         }
 
-        // ── cloudSetPresence: write heartbeat + update local state ────────────
+        // No-op: presence never stored in main state
         async function cloudSetPresence(staffId, isOnline) {
-            const idx = db_staff.findIndex(s => String(s.id) === String(staffId));
-            if (idx > -1) {
-                db_staff[idx].online   = isOnline;
-                db_staff[idx].lastSeen = Date.now();
-            }
-            if (isOnline) {
-                await _writeHeartbeat(staffId);
-            } else {
-                _markOfflineSync(staffId);
-            }
+            if (isOnline) await _writeHeartbeat(staffId);
+            else _markOfflineSync(staffId);
         }
 
-        // ── beaconOffline: alias for page-close path ──────────────────────────
-        function beaconOffline(staffId) {
-            _markOfflineSync(staffId);
-        }
+        function beaconOffline(staffId) { _markOfflineSync(staffId); }
 
         // ===================== DATABASE & STATE =====================
         let db_biz     = JSON.parse(localStorage.getItem('v72_biz'))     || { name: "", website: "", phone: "", address: "", social: "" };
