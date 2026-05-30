@@ -633,7 +633,7 @@
 </div>
 <div class="table-responsive">
 <table>
-<thead><tr><th>Invoice #</th><th>Date</th><th>Customer</th><th>Cashier</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+<thead><tr><th>Invoice #</th><th>Date</th><th>Customer</th><th>Due Date</th><th>Total</th><th>Paid / Progress</th><th>Action</th></tr></thead>
 <tbody id="pending-table"></tbody>
 </table>
 </div>
@@ -901,12 +901,53 @@
 <button onclick="processCheckout('Card')" style="background:#2980b9; color:white; border:none; border-radius:14px; padding:20px 8px; font-size:14px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:8px;">
 <span style="font-size:34px;">💳</span>Card
             </button>
-<button onclick="processCheckout('Credit')" style="background:#8e44ad; color:white; border:none; border-radius:14px; padding:20px 8px; font-size:14px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:8px;">
+<button onclick="openCreditSetup()" style="background:#8e44ad; color:white; border:none; border-radius:14px; padding:20px 8px; font-size:14px; font-weight:700; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:8px;">
 <span style="font-size:34px;">📝</span>Credit
             </button>
 </div>
 <button onclick="closePaymentModal()" style="background:none; border:none; color:#7f8c8d; font-size:14px; cursor:pointer; padding:8px;">← Cancel</button>
 </div>
+</div>
+
+<!-- ── Credit / Instalment Setup Modal ───────────────────────────────── -->
+<div id="modal-credit-setup" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:8300; justify-content:center; align-items:center; padding:16px;">
+  <div class="card" style="width:min(400px,96vw);">
+    <h3 style="color:#8e44ad; margin-bottom:4px;">📝 Credit / Instalment Sale</h3>
+    <div class="mini" style="margin-bottom:14px;">Total due: <strong id="credit-total-display" style="color:var(--odoo-teal);">₦0</strong></div>
+    <label>Initial Deposit (₦) <span style="color:#7f8c8d; font-size:12px;">— leave 0 if none today</span></label>
+    <input id="credit-deposit" type="number" min="0" value="0" placeholder="0"/>
+    <div id="credit-deposit-preview" style="font-size:12px; color:#27ae60; margin-bottom:8px; display:none;"></div>
+    <label>Expected Full Payment Date <span style="color:#7f8c8d; font-size:12px;">(optional)</span></label>
+    <input id="credit-due-date" type="date"/>
+    <div style="display:flex; gap:10px; margin-top:8px;">
+      <button class="btn-odoo" style="flex:1; background:#8e44ad;" onclick="processCheckout('Credit')">Confirm Credit Sale</button>
+      <button onclick="closeCreditSetup()" style="flex:1; background:none; border:1px solid #ddd; border-radius:8px; padding:10px; cursor:pointer; color:#555;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Add Instalment Payment Modal ──────────────────────────────────── -->
+<div id="modal-instalment" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:8400; justify-content:center; align-items:center; padding:16px;">
+  <div class="card" style="width:min(400px,96vw);">
+    <h3 style="color:#8e44ad; margin-bottom:6px;">💰 Record Instalment Payment</h3>
+    <input type="hidden" id="instalment-inv"/>
+    <div style="background:#f9f0ff; border-radius:8px; padding:12px; margin-bottom:14px; font-size:13px; line-height:1.8;">
+      <div>Invoice: <strong id="inst-inv-display" style="font-family:monospace;"></strong></div>
+      <div>Customer: <strong id="inst-customer-display"></strong></div>
+      <div>Total Due: <strong id="inst-total-display" style="color:#8e44ad;"></strong></div>
+      <div>Already Paid: <strong id="inst-paid-display" style="color:#27ae60;"></strong></div>
+      <div>Balance Left: <strong id="inst-balance-display" style="color:#e74c3c;"></strong></div>
+    </div>
+    <label>Amount Received Now (₦)</label>
+    <input id="inst-amount" type="number" min="1" placeholder="Enter amount received" oninput="previewInstalment()"/>
+    <div id="inst-preview" style="font-size:12px; margin-bottom:10px; padding:8px 12px; border-radius:6px; display:none;"></div>
+    <label>Note <span style="color:#7f8c8d; font-size:12px;">(optional)</span></label>
+    <input id="inst-note" type="text" placeholder="e.g. Bank transfer, cash drop"/>
+    <div style="display:flex; gap:10px; margin-top:10px;">
+      <button class="btn-odoo btn-teal" style="flex:1;" onclick="recordInstalment()">✅ Record Payment</button>
+      <button onclick="closeInstalmentModal()" style="flex:1; background:none; border:1px solid #ddd; border-radius:8px; padding:10px; cursor:pointer; color:#555;">Cancel</button>
+    </div>
+  </div>
 </div>
 <!-- Variant Picker Modal -->
 <div id="variant-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:8100; justify-content:center; align-items:center; padding:16px;">
@@ -2189,6 +2230,42 @@ function staffNormalizeProducts(items) {
             document.getElementById('modal-payment').style.display = 'none';
         }
 
+        function openCreditSetup() {
+            // Compute current total to display
+            let subtotal = 0;
+            for (const cItem of cart) {
+                const p = db_inv.find(x => x.id == cItem.id);
+                if (p) subtotal += p.price * cItem.qty;
+            }
+            const disc = getDiscountAmount(subtotal);
+            const finalTotal = Math.max(0, subtotal - disc);
+            document.getElementById('credit-total-display').textContent = '₦' + finalTotal.toLocaleString();
+            document.getElementById('credit-deposit').value   = '';
+            document.getElementById('credit-due-date').value  = '';
+            document.getElementById('credit-deposit-preview').style.display = 'none';
+            // Wire deposit preview
+            const depInput = document.getElementById('credit-deposit');
+            depInput.oninput = () => {
+                const dep = parseFloat(depInput.value) || 0;
+                const prev = document.getElementById('credit-deposit-preview');
+                if (dep > 0 && dep <= finalTotal) {
+                    prev.style.display = 'block';
+                    prev.textContent = `Balance after deposit: ₦${(finalTotal - dep).toLocaleString()}`;
+                } else if (dep > finalTotal) {
+                    prev.style.display = 'block';
+                    prev.textContent = `⚠️ Deposit exceeds total — will be treated as full payment.`;
+                } else {
+                    prev.style.display = 'none';
+                }
+            };
+            document.getElementById('modal-payment').style.display = 'none';
+            document.getElementById('modal-credit-setup').style.display = 'flex';
+        }
+
+        function closeCreditSetup() {
+            document.getElementById('modal-credit-setup').style.display = 'none';
+        }
+
         async function processCheckout(paymentMethod) {
             closePaymentModal();
             if (!cart.length) return showToast('Cart is empty!', 'warning');
@@ -2242,24 +2319,50 @@ function staffNormalizeProducts(items) {
 
             if (paymentMethod === 'Credit') {
                 // ── CREDIT: store in pending, do NOT touch db_acc or db_finance ──
-                db_pending.push({
-                    inv: invNum, customer: cust, cashier, timestamp,
-                    date: new Date(timestamp).toLocaleDateString(),
-                    total: finalTotal, profit, cost: totalCost, paymentMethod,
-                    items: saleItems.map(c => ({ id: c.id, qty: c.qty })),
-                    subtotal, discount: disc, status: 'pending'
-                });
-                const sIdx = db_staff.findIndex(x => x.id == user.id);
-                if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
-                persist();
-                cart = [];
-                document.getElementById('cust-name').value = '';
-                document.getElementById('pos-discount').value = '';
-                _discountType = 'flat'; setDiscountType('flat');
-                calculateTotal();
-                renderPOS(); renderStaff(); renderReceipts(); renderPendingPayments();
-                printThermalReceipt(currentInvoice);
-                showToast(`⏳ Credit sale recorded — PENDING approval. Receipt printing!`, 'warning');
+                const deposit  = Math.min(Math.max(0, parseFloat(document.getElementById('credit-deposit').value) || 0), finalTotal);
+                const dueDate  = document.getElementById('credit-due-date').value || '';
+                const instalments = deposit > 0
+                    ? [{ date: new Date().toLocaleDateString(), amount: deposit, note: 'Initial deposit', ts: timestamp }]
+                    : [];
+                document.getElementById('modal-credit-setup').style.display = 'none';
+                // If deposit covers everything, treat as immediate full payment
+                if (deposit >= finalTotal) {
+                    db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)' });
+                    db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)', items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
+                    db_finance += finalTotal;
+                    const sIdx = db_staff.findIndex(x => x.id == user.id);
+                    if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
+                    persist();
+                    cart = []; document.getElementById('cust-name').value = '';
+                    document.getElementById('pos-discount').value = '';
+                    _discountType = 'flat'; setDiscountType('flat');
+                    calculateTotal();
+                    renderPOS(); renderAccounting(); renderStaff(); renderReceipts();
+                    printThermalReceipt(currentInvoice);
+                    showToast(`✅ Credit fully settled at sale. Receipt printing!`, 'success');
+                } else {
+                    db_pending.push({
+                        inv: invNum, customer: cust, cashier, timestamp,
+                        date: new Date(timestamp).toLocaleDateString(),
+                        dueDate, total: finalTotal, profit, cost: totalCost, paymentMethod,
+                        items: saleItems.map(c => ({ id: c.id, qty: c.qty })),
+                        subtotal, discount: disc, status: 'pending',
+                        amountPaid: deposit, instalments
+                    });
+                    const sIdx = db_staff.findIndex(x => x.id == user.id);
+                    if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
+                    persist();
+                    cart = []; document.getElementById('cust-name').value = '';
+                    document.getElementById('pos-discount').value = '';
+                    _discountType = 'flat'; setDiscountType('flat');
+                    calculateTotal();
+                    renderPOS(); renderStaff(); renderReceipts(); renderPendingPayments();
+                    printThermalReceipt(currentInvoice);
+                    const msg = deposit > 0
+                        ? `⏳ Credit recorded. Deposit ₦${deposit.toLocaleString()} noted. Balance: ₦${(finalTotal-deposit).toLocaleString()}`
+                        : `⏳ Credit sale recorded. No deposit. Balance: ₦${finalTotal.toLocaleString()}`;
+                    showToast(msg, 'warning');
+                }
             } else {
                 // ── CASH / CARD: post immediately ──
                 db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
@@ -2336,20 +2439,137 @@ function staffNormalizeProducts(items) {
                 tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#7f8c8d; padding:20px;">No pending credit payments.</td></tr>`;
                 return;
             }
-            tbody.innerHTML = db_pending.slice().reverse().map(p => `
-                <tr style="background:#fffbea;">
+            tbody.innerHTML = db_pending.slice().reverse().map(p => {
+                const paid    = p.amountPaid || 0;
+                const balance = Math.max(0, p.total - paid);
+                const pct     = Math.min(100, p.total > 0 ? (paid / p.total) * 100 : 0).toFixed(0);
+                const overdue = p.dueDate && new Date(p.dueDate) < new Date() && balance > 0;
+                const progressBar = `
+                    <div style="font-size:12px; margin-bottom:4px;">
+                        <span style="color:#27ae60; font-weight:700;">₦${paid.toLocaleString()} paid</span>
+                        ${balance > 0 ? `<span style="color:#e74c3c;"> · ₦${balance.toLocaleString()} left</span>` : '<span style="color:#27ae60;"> · COMPLETE</span>'}
+                    </div>
+                    <div style="background:#eee; border-radius:6px; height:8px; overflow:hidden;">
+                        <div style="background:${pct>=100?'#27ae60':'#f39c12'}; width:${pct}%; height:100%; border-radius:6px; transition:width 0.4s;"></div>
+                    </div>
+                    <div style="font-size:11px; color:#aaa; margin-top:2px;">${pct}% paid</div>`;
+                const instList = (p.instalments||[]).length > 0
+                    ? `<details style="margin-top:6px; font-size:11px; color:#555;">
+                        <summary style="cursor:pointer; color:#8e44ad;">History (${p.instalments.length})</summary>
+                        ${p.instalments.map(i=>`<div style="padding:2px 0;">• ${i.date} — ₦${i.amount.toLocaleString()}${i.note?' <em>('+escapeHtml(i.note)+')</em>':''}</div>`).join('')}
+                       </details>` : '';
+                return `
+                <tr style="background:${overdue?'#fff3f3':'#fffbea'};">
                     <td style="font-family:monospace;">${p.inv}</td>
                     <td>${p.date}</td>
-                    <td>${escapeHtml(p.customer)}</td>
-                    <td>${escapeHtml(p.cashier)}</td>
+                    <td><b>${escapeHtml(p.customer)}</b><br><small style="color:#7f8c8d;">${escapeHtml(p.cashier)}</small></td>
+                    <td>${p.dueDate ? `<span style="color:${overdue?'#e74c3c':'#555'};">${overdue?'⚠️ ':''} ${p.dueDate}</span>` : '<span style="color:#aaa;">—</span>'}</td>
                     <td style="font-weight:bold; color:#8e44ad;">₦${p.total.toLocaleString()}</td>
-                    <td><span class="badge badge-suspended">PENDING</span></td>
-                    <td>
-                        ${isAdmin ? `<button class="btn-odoo btn-teal" style="padding:5px 10px; font-size:11px;" onclick="approvePendingPayment('${p.inv}')">✅ Approve</button>
-                        <button class="btn-odoo btn-danger" style="padding:5px 10px; font-size:11px; margin-left:4px;" onclick="rejectPendingPayment('${p.inv}')">❌ Reject</button>` : '<span style="color:#7f8c8d; font-size:12px;">Admin only</span>'}
+                    <td>${progressBar}${instList}</td>
+                    <td style="min-width:130px;">
+                        <button class="btn-odoo" style="padding:5px 10px; font-size:11px; background:#8e44ad; color:white; margin-bottom:4px; width:100%;" onclick="openInstalmentModal('${p.inv}')">💰 Add Payment</button>
+                        ${isAdmin ? `<button class="btn-odoo btn-teal" style="padding:5px 10px; font-size:11px; width:100%; margin-bottom:4px;" onclick="approvePendingPayment('${p.inv}')">✅ Approve Full</button>
+                        <button class="btn-odoo btn-danger" style="padding:5px 10px; font-size:11px; width:100%;" onclick="rejectPendingPayment('${p.inv}')">❌ Reject</button>` : ''}
                     </td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
+        }
+
+        // ── Open instalment entry modal ───────────────────────────────────────
+        function openInstalmentModal(invNo) {
+            const p = db_pending.find(x => x.inv === invNo);
+            if (!p) return showToast('Record not found.', 'error');
+            const paid    = p.amountPaid || 0;
+            const balance = Math.max(0, p.total - paid);
+            document.getElementById('instalment-inv').value        = invNo;
+            document.getElementById('inst-inv-display').textContent = invNo;
+            document.getElementById('inst-customer-display').textContent = p.customer;
+            document.getElementById('inst-total-display').textContent    = '₦' + p.total.toLocaleString();
+            document.getElementById('inst-paid-display').textContent     = '₦' + paid.toLocaleString();
+            document.getElementById('inst-balance-display').textContent  = '₦' + balance.toLocaleString();
+            document.getElementById('inst-amount').value = '';
+            document.getElementById('inst-note').value   = '';
+            document.getElementById('inst-preview').style.display = 'none';
+            document.getElementById('modal-instalment').style.display = 'flex';
+        }
+        function closeInstalmentModal() { document.getElementById('modal-instalment').style.display = 'none'; }
+
+        function previewInstalment() {
+            const invNo = document.getElementById('instalment-inv').value;
+            const p     = db_pending.find(x => x.inv === invNo);
+            if (!p) return;
+            const paid    = p.amountPaid || 0;
+            const balance = Math.max(0, p.total - paid);
+            const amount  = Math.max(0, parseFloat(document.getElementById('inst-amount').value) || 0);
+            const prev    = document.getElementById('inst-preview');
+            if (!amount) { prev.style.display = 'none'; return; }
+            const newPaid = paid + amount;
+            const willComplete = newPaid >= p.total;
+            prev.style.display = 'block';
+            prev.style.background = willComplete ? '#d4edda' : '#fff8e1';
+            prev.style.color      = willComplete ? '#155724' : '#856404';
+            prev.style.border     = `1px solid ${willComplete ? '#c3e6cb' : '#ffeeba'}`;
+            prev.style.borderRadius = '6px';
+            prev.style.padding = '8px 12px';
+            if (willComplete) {
+                const over = newPaid - p.total;
+                prev.textContent = `✅ This completes the payment!${over > 0 ? ' Change: ₦' + over.toLocaleString() : ''}`;
+            } else {
+                const remaining = p.total - newPaid;
+                prev.textContent = `Balance after this payment: ₦${remaining.toLocaleString()}`;
+            }
+        }
+
+        async function recordInstalment() {
+            const invNo  = document.getElementById('instalment-inv').value;
+            const amount = parseFloat(document.getElementById('inst-amount').value);
+            const note   = document.getElementById('inst-note').value.trim();
+            if (!amount || amount <= 0) return showToast('Enter a valid amount.', 'error');
+            const idx = db_pending.findIndex(x => x.inv === invNo);
+            if (idx === -1) return showToast('Record not found.', 'error');
+            const p = db_pending[idx];
+            const balance = Math.max(0, p.total - (p.amountPaid || 0));
+            if (amount > balance + 0.01) return showToast(`Amount exceeds balance of ₦${balance.toLocaleString()}`, 'error');
+
+            // Record the instalment
+            if (!p.instalments) p.instalments = [];
+            p.instalments.push({ date: new Date().toLocaleDateString(), amount, note, ts: Date.now() });
+            p.amountPaid = (p.amountPaid || 0) + amount;
+
+            closeInstalmentModal();
+
+            // Auto-complete if fully paid
+            if (p.amountPaid >= p.total) {
+                // Post to accounts & sales — just like full approval
+                db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
+                    date: p.date, total: p.total, profit: p.profit, cost: p.cost,
+                    paymentMethod: 'Credit (Instalment — Completed)', instalments: p.instalments });
+                db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
+                    date: p.date, total: p.total, profit: p.profit, cost: p.cost,
+                    paymentMethod: 'Credit (Instalment — Completed)', items: p.items, instalments: p.instalments });
+                db_finance += p.total;
+                db_pending.splice(idx, 1);
+                await persist();
+                // Print a completion receipt
+                const fullSale = {
+                    inv: p.inv, customer: p.customer, cashier: p.cashier,
+                    timestamp: Date.now(),
+                    date: new Date().toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' }),
+                    paymentMethod: 'Credit (Fully Paid)',
+                    items: (p.items||[]).map(it => {
+                        const prod = db_inv.find(x => x.id == it.id);
+                        return { id: it.id, name: prod ? prod.name : 'Item', qty: it.qty, price: prod ? prod.price : 0, cost: prod ? prod.cost : 0 };
+                    }),
+                    subtotal: p.subtotal || p.total, discount: p.discount || 0, total: p.total, profit: p.profit
+                };
+                renderPendingPayments(); renderReceipts(); renderAccounting();
+                printThermalReceipt(fullSale);
+                showToast(`🎉 ${invNo} fully paid! Receipt printing and accounts updated.`, 'success');
+            } else {
+                await persist();
+                renderPendingPayments();
+                showToast(`✅ ₦${amount.toLocaleString()} recorded. Balance: ₦${(p.total - p.amountPaid).toLocaleString()}`, 'success');
+            }
         }
 
         async function approvePendingPayment(invNo) {
