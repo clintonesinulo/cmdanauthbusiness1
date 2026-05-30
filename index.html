@@ -596,7 +596,16 @@
 <div id="cart-list" style="flex:1; overflow-y: auto; min-height:80px; max-height:320px;"></div>
 <div style="padding-top:12px; border-top:1px solid #eee; margin-top:10px;">
 <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:13px; color:#7f8c8d;">Subtotal: <span id="sub-val" style="color:var(--text-dark); font-weight:600;">₦0</span></div>
-<input id="pos-discount" min="0" oninput="calculateTotal()" placeholder="Discount ₦" style="margin-bottom:8px;" type="number" value="0"/>
+<div style="display:flex; gap:6px; margin-bottom:8px; align-items:center;">
+  <input id="pos-discount" min="0" oninput="calculateTotal()" placeholder="0" style="margin:0; flex:1;" type="number" value=""/>
+  <div style="display:flex; border:1px solid #ddd; border-radius:6px; overflow:hidden; flex-shrink:0;">
+    <button id="disc-type-flat" onclick="setDiscountType('flat')"
+      style="padding:7px 11px; font-size:12px; font-weight:700; border:none; cursor:pointer; background:var(--odoo-teal); color:white;">₦</button>
+    <button id="disc-type-pct" onclick="setDiscountType('pct')"
+      style="padding:7px 11px; font-size:12px; font-weight:700; border:none; cursor:pointer; background:#eee; color:#555;">%</button>
+  </div>
+</div>
+<div id="discount-preview" style="font-size:12px; color:#e67e22; margin-bottom:6px; display:none;"></div>
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
 <span style="font-size:13px; color:#7f8c8d;">TOTAL DUE</span>
 <h2 id="total-price" style="color:var(--odoo-teal); font-size:26px; font-weight:800;">₦0</h2>
@@ -1933,7 +1942,7 @@ function staffNormalizeProducts(items) {
                 </table>
                 <div class="totals">
                     <div><span>Subtotal:</span> <span>₦${inv.subtotal.toLocaleString()}</span></div>
-                    <div><span>Discount:</span> <span>₦${inv.discount.toLocaleString()}</span></div>
+                    <div><span>Discount${inv.discountLabel ? ' (' + inv.discountLabel + ')' : ''}:</span> <span>-₦${inv.discount.toLocaleString()}</span></div>
                     <div style="font-size: 15px; border-top: 2px solid #000; padding-top: 5px; margin-top: 5px;"><span>TOTAL:</span> <span>₦${inv.total.toLocaleString()}</span></div>
                 </div>
                 <hr style="border-top: 1px dashed #000; margin: 10px 0;">
@@ -2106,6 +2115,27 @@ function staffNormalizeProducts(items) {
         function removeFromCart(idx) { cart.splice(idx, 1); calculateTotal(); }
         function clearCart() { cart = []; calculateTotal(); }
 
+        let _discountType = 'flat'; // 'flat' or 'pct'
+
+        function setDiscountType(type) {
+            _discountType = type;
+            document.getElementById('disc-type-flat').style.background = type === 'flat' ? 'var(--odoo-teal)' : '#eee';
+            document.getElementById('disc-type-flat').style.color      = type === 'flat' ? 'white' : '#555';
+            document.getElementById('disc-type-pct').style.background  = type === 'pct'  ? 'var(--odoo-teal)' : '#eee';
+            document.getElementById('disc-type-pct').style.color       = type === 'pct'  ? 'white' : '#555';
+            document.getElementById('pos-discount').placeholder = type === 'pct' ? '0  (e.g. 10 = 10%)' : '0';
+            calculateTotal();
+        }
+
+        function getDiscountAmount(subtotal) {
+            const val = Math.max(0, parseFloat(document.getElementById('pos-discount').value) || 0);
+            if (_discountType === 'pct') {
+                const pct = Math.min(val, 100);
+                return (pct / 100) * subtotal;
+            }
+            return Math.min(val, subtotal); // flat ₦ — can't exceed subtotal
+        }
+
         function calculateTotal() {
             const list = document.getElementById('cart-list');
             let subtotal = 0;
@@ -2123,20 +2153,33 @@ function staffNormalizeProducts(items) {
                     </div>
                 `;
             }).join('');
-            const discount = Math.max(0, parseFloat(document.getElementById('pos-discount').value) || 0);
+            const discount = getDiscountAmount(subtotal);
             const final = Math.max(0, subtotal - discount);
             document.getElementById('sub-val').innerText = '₦' + subtotal.toLocaleString();
             document.getElementById('total-price').innerText = '₦' + final.toLocaleString();
+            // Show discount preview
+            const prev = document.getElementById('discount-preview');
+            const rawVal = parseFloat(document.getElementById('pos-discount').value) || 0;
+            if (prev) {
+                if (rawVal > 0 && subtotal > 0) {
+                    prev.style.display = 'block';
+                    prev.textContent = _discountType === 'pct'
+                        ? `${Math.min(rawVal,100)}% off = -₦${discount.toLocaleString()}`
+                        : `Discount: -₦${discount.toLocaleString()}`;
+                } else {
+                    prev.style.display = 'none';
+                }
+            }
         }
 
         function openPaymentModal() {
             if (!cart.length) return showToast('Cart is empty!', 'warning');
-            const disc = Math.max(0, parseFloat(document.getElementById('pos-discount').value) || 0);
             let subtotal = 0;
             for (const cItem of cart) {
                 const p = db_inv.find(x => x.id == cItem.id);
                 if (p) subtotal += p.price * cItem.qty;
             }
+            const disc = getDiscountAmount(subtotal);
             const finalTotal = Math.max(0, subtotal - disc);
             document.getElementById('pay-total-display').innerText = '₦' + finalTotal.toLocaleString();
             document.getElementById('modal-payment').style.display = 'flex';
@@ -2150,7 +2193,6 @@ function staffNormalizeProducts(items) {
             closePaymentModal();
             if (!cart.length) return showToast('Cart is empty!', 'warning');
             const cust = document.getElementById('cust-name').value.trim() || 'Walk-in Customer';
-            const disc = Math.max(0, parseFloat(document.getElementById('pos-discount').value) || 0);
             const saleItems = cart.map(c => ({ ...c }));
             let subtotal = 0; let totalCost = 0;
 
@@ -2163,6 +2205,7 @@ function staffNormalizeProducts(items) {
                 totalCost += _fifoConsumeCost(stockItem.costLayers, cItem.qty, stockItem.cost);
             }
 
+            const disc = getDiscountAmount(subtotal);
             const finalTotal = Math.max(0, subtotal - disc);
             const profit = finalTotal - totalCost;
             const invNum = 'INV-' + Date.now().toString().slice(-6);
@@ -2183,6 +2226,10 @@ function staffNormalizeProducts(items) {
                 }
             });
 
+            const rawDiscVal = parseFloat(document.getElementById('pos-discount').value) || 0;
+            const discountLabel = rawDiscVal > 0
+                ? (_discountType === 'pct' ? `${Math.min(rawDiscVal,100)}% off` : `₦${disc.toLocaleString()} off`)
+                : '';
             currentInvoice = {
                 inv: invNum, customer: cust, cashier, timestamp, paymentMethod,
                 date: receiptDateTime,
@@ -2190,7 +2237,7 @@ function staffNormalizeProducts(items) {
                     const p = db_inv.find(x => x.id == c.id);
                     return { id: c.id, name: p ? p.name : 'Item', qty: c.qty, price: p ? p.price : 0, cost: p ? p.cost : 0 };
                 }),
-                subtotal, discount: disc, total: finalTotal, profit
+                subtotal, discount: disc, discountLabel, total: finalTotal, profit
             };
 
             if (paymentMethod === 'Credit') {
@@ -2207,7 +2254,8 @@ function staffNormalizeProducts(items) {
                 persist();
                 cart = [];
                 document.getElementById('cust-name').value = '';
-                document.getElementById('pos-discount').value = '0';
+                document.getElementById('pos-discount').value = '';
+                _discountType = 'flat'; setDiscountType('flat');
                 calculateTotal();
                 renderPOS(); renderStaff(); renderReceipts(); renderPendingPayments();
                 printThermalReceipt(currentInvoice);
@@ -2222,7 +2270,8 @@ function staffNormalizeProducts(items) {
                 persist();
                 cart = [];
                 document.getElementById('cust-name').value = '';
-                document.getElementById('pos-discount').value = '0';
+                document.getElementById('pos-discount').value = '';
+                _discountType = 'flat'; setDiscountType('flat');
                 calculateTotal();
                 renderPOS(); renderAccounting(); renderStaff(); renderReceipts();
                 printThermalReceipt(currentInvoice);
