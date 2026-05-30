@@ -2479,13 +2479,15 @@ function staffNormalizeProducts(items) {
             const tbody = document.getElementById('pending-table');
             if (!tbody) return;
             const isAdmin = user && user.role === 'admin';
+            // Staff only see their own credit sales; admin sees all
+            const visible = isAdmin ? db_pending : db_pending.filter(p => p.cashier === user.name);
             const badge = document.getElementById('pending-count-badge');
-            if (badge) badge.textContent = db_pending.length ? `${db_pending.length} pending` : '';
-            if (!db_pending.length) {
-                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#7f8c8d; padding:20px;">No pending credit payments.</td></tr>`;
+            if (badge) badge.textContent = visible.length ? `${visible.length} pending` : '';
+            if (!visible.length) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#7f8c8d; padding:20px;">${isAdmin ? 'No pending credit payments.' : 'You have no pending credit sales.'}</td></tr>`;
                 return;
             }
-            tbody.innerHTML = db_pending.slice().reverse().map(p => {
+            tbody.innerHTML = visible.slice().reverse().map(p => {
                 const paid    = p.amountPaid || 0;
                 const balance = Math.max(0, p.total - paid);
                 const pct     = Math.min(100, p.total > 0 ? (paid / p.total) * 100 : 0).toFixed(0);
