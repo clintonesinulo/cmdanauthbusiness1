@@ -2349,6 +2349,8 @@ function staffNormalizeProducts(items) {
                         subtotal, discount: disc, status: 'pending',
                         amountPaid: deposit, instalments
                     });
+                    // ── Deposit goes straight to balance (cash in hand) ──
+                    if (deposit > 0) db_finance += deposit;
                     const sIdx = db_staff.findIndex(x => x.id == user.id);
                     if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
                     persist();
@@ -2536,18 +2538,22 @@ function staffNormalizeProducts(items) {
             p.instalments.push({ date: new Date().toLocaleDateString(), amount, note, ts: Date.now() });
             p.amountPaid = (p.amountPaid || 0) + amount;
 
+            // ── Every instalment received hits the balance immediately ──
+            db_finance += amount;
+            persistLocalOnly(); // update navbar balance right away
+
             closeInstalmentModal();
 
             // Auto-complete if fully paid
             if (p.amountPaid >= p.total) {
-                // Post to accounts & sales — just like full approval
+                // Post to accounts & sales for analytics (do NOT add to finance again)
                 db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
                     date: p.date, total: p.total, profit: p.profit, cost: p.cost,
                     paymentMethod: 'Credit (Instalment — Completed)', instalments: p.instalments });
                 db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
                     date: p.date, total: p.total, profit: p.profit, cost: p.cost,
                     paymentMethod: 'Credit (Instalment — Completed)', items: p.items, instalments: p.instalments });
-                db_finance += p.total;
+                // finance already has all collected amounts — do NOT add p.total again
                 db_pending.splice(idx, 1);
                 await persist();
                 // Print a completion receipt
@@ -2581,7 +2587,10 @@ function staffNormalizeProducts(items) {
                 // Move to confirmed records
                 db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp, date: p.date, total: p.total, profit: p.profit, cost: p.cost, paymentMethod: 'Credit (Approved)' });
                 db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp, date: p.date, total: p.total, profit: p.profit, cost: p.cost, paymentMethod: 'Credit (Approved)', items: p.items });
-                db_finance += p.total;
+                // Only add the remaining unpaid balance — deposits already in finance
+                const alreadyCollected = p.amountPaid || 0;
+                const remainingBalance = Math.max(0, p.total - alreadyCollected);
+                db_finance += remainingBalance;
                 db_pending.splice(idx, 1);
                 await persist();
                 renderPendingPayments(); renderReceipts(); renderAccounting();
@@ -2603,10 +2612,14 @@ function staffNormalizeProducts(items) {
                         db_inv[iIdx].sales = Math.max(0, (db_inv[iIdx].sales || 0) - it.qty);
                     }
                 });
+                // Refund only what was actually collected (deposits already in balance)
+                const collected = p.amountPaid || 0;
+                if (collected > 0) db_finance = Math.max(0, db_finance - collected);
                 db_pending.splice(idx, 1);
                 await persist();
-                renderPendingPayments(); renderInventory(); renderPOS();
-                showToast(`❌ Credit sale ${invNo} rejected — stock restored.`, 'warning');
+                renderPendingPayments(); renderInventory(); renderPOS(); renderAccounting();
+                const refundMsg = collected > 0 ? ` ₦${collected.toLocaleString()} removed from balance.` : '';
+                showToast(`❌ Credit sale ${invNo} rejected — stock restored.${refundMsg}`, 'warning');
             });
         }
 
