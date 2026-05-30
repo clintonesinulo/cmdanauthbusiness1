@@ -676,7 +676,7 @@
 <h3>Purchase History</h3>
 <div class="table-responsive" style="margin-top:20px;">
 <table>
-<thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Unit Cost</th><th>Total Spent</th></tr></thead>
+<thead><tr><th>Date</th><th>Item</th><th>Qty</th><th>Unit Cost</th><th>Total Spent</th><th>Action</th></tr></thead>
 <tbody id="purchase-history-table"></tbody>
 </table>
 </div>
@@ -1535,14 +1535,13 @@ function staffNormalizeProducts(items) {
 
         // ===================== ONLINE / OFFLINE PRESENCE =====================
         function setStaffOnlineStatus(staffId, isOnline) {
+            // Only update in-memory; presence blob handled by _writeHeartbeat / _markOfflineSync
             const idx = db_staff.findIndex(x => x.id === staffId);
             if (idx > -1) {
-                db_staff[idx].online = isOnline;
+                db_staff[idx].online   = isOnline;
                 db_staff[idx].lastSeen = Date.now();
-                persistLocalOnly();
             }
-            // Also write to Firestore presence collection for cross-device sync
-            cloudSetPresence(staffId, isOnline);
+            // Do NOT call persistLocalOnly here — that would cache online:true in localStorage
         }
 
         // startPresenceHeartbeat defined above in the presence system block
@@ -2415,25 +2414,97 @@ function staffNormalizeProducts(items) {
         }
 
         // ===================== PROCUREMENT =====================
+        function calcUnitCost() {
+            const qty   = parseInt(document.getElementById('buy-qty').value, 10);
+            const total = parseFloat(document.getElementById('buy-cost').value);
+            const preview = document.getElementById('unit-cost-preview');
+            const valEl   = document.getElementById('unit-cost-value');
+            if (qty > 0 && total > 0 && preview && valEl) {
+                const unit = total / qty;
+                valEl.textContent = '₦' + unit.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                preview.style.display = 'block';
+            } else if (preview) {
+                preview.style.display = 'none';
+            }
+        }
+
         function renderProcurement() {
             const sel = document.getElementById('buy-prod-id');
             if (!sel) return;
-            sel.innerHTML = db_inv.length ? db_inv.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.style || 'No style')})</option>`).join('') : `<option value="">No products yet</option>`;
-            document.getElementById('purchase-history-table').innerHTML = db_purch.slice().reverse().map(h => `<tr><td>${h.date}</td><td>${escapeHtml(h.name)}</td><td>${h.qty}</td><td>₦${h.unitCost.toLocaleString()}</td><td style="color:#e74c3c; font-weight:bold;">-₦${(h.qty * h.unitCost).toLocaleString()}</td></tr>`).join('');
+            sel.innerHTML = db_inv.length
+                ? db_inv.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.style || 'No style')}) — unit cost: ₦${(+p.cost||0).toLocaleString()}</option>`).join('')
+                : `<option value="">No products yet</option>`;
+            const isAdmin = user && user.role === 'admin';
+            document.getElementById('purchase-history-table').innerHTML = db_purch.slice().reverse().map((h, i) => {
+                const unitC  = h.unitCost  || (h.totalCost ? h.totalCost / h.qty : 0);
+                const totalC = h.totalCost || (h.unitCost  ? h.unitCost  * h.qty : 0);
+                const purchId = h.timestamp || i;
+                return `<tr>
+                    <td>${h.date}</td>
+                    <td><b>${escapeHtml(h.name)}</b></td>
+                    <td>${h.qty} units</td>
+                    <td style="color:#7f8c8d;">₦${unitC.toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2})} /unit</td>
+                    <td style="color:#e74c3c;font-weight:bold;">-₦${totalC.toLocaleString()}</td>
+                    <td>${isAdmin ? `<button class="btn-odoo btn-danger" style="padding:5px 10px;font-size:11px;" onclick="reversePurchase(${purchId})">🔁 Reverse</button>` : ''}</td>
+                </tr>`;
+            }).join('');
         }
 
         function processPurchase() {
-            const pid = document.getElementById('buy-prod-id').value;
-            const qty = parseInt(document.getElementById('buy-qty').value, 10);
-            const cost = parseFloat(document.getElementById('buy-cost').value);
-            if (!pid || !qty || !cost) return showToast('Fill all fields', 'error');
-            const totalCost = qty * cost;
-            if (totalCost > db_finance) return showToast('Insufficient Balance!', 'error');
+            const pid       = document.getElementById('buy-prod-id').value;
+            const qty       = parseInt(document.getElementById('buy-qty').value, 10);
+            const totalCost = parseFloat(document.getElementById('buy-cost').value);
+            if (!pid || !qty || isNaN(totalCost) || totalCost <= 0) return showToast('Fill all fields correctly.', 'error');
+            if (qty < 1) return showToast('Quantity must be at least 1.', 'error');
+            if (totalCost > db_finance) return showToast('Insufficient balance! Top up the account first.', 'error');
             const pIdx = db_inv.findIndex(x => x.id == pid);
             if (pIdx < 0) return showToast('Product not found.', 'error');
-            db_finance -= totalCost; db_inv[pIdx].stock += qty; db_inv[pIdx].cost = cost;
-            db_purch.push({ date: new Date().toLocaleDateString(), name: db_inv[pIdx].name, qty, unitCost: cost, timestamp: Date.now() });
-            persist(); renderProcurement(); renderInventory(); renderPOS(); renderAccounting(); showToast(`Restocked ${qty} items.`);
+            const unitCost = totalCost / qty;
+            const prevCost = db_inv[pIdx].cost;
+            db_finance -= totalCost;
+            db_inv[pIdx].stock += qty;
+            db_inv[pIdx].cost   = unitCost;
+            db_purch.push({
+                date: new Date().toLocaleDateString(),
+                name: db_inv[pIdx].name,
+                productId: db_inv[pIdx].id,
+                qty,
+                totalCost,
+                unitCost,
+                prevCost,
+                timestamp: Date.now()
+            });
+            document.getElementById('buy-qty').value  = '';
+            document.getElementById('buy-cost').value = '';
+            const preview = document.getElementById('unit-cost-preview');
+            if (preview) preview.style.display = 'none';
+            persist();
+            renderProcurement(); renderInventory(); renderPOS(); renderAccounting();
+            showToast(`✅ Restocked ${qty} units. Unit cost: ₦${unitCost.toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2})}`);
+        }
+
+        // ── Admin: reverse a purchase (restore finance, deduct stock, restore prev cost) ──
+        function reversePurchase(purchTimestamp) {
+            if (!user || user.role !== 'admin') return showToast('Admin access required.', 'error');
+            const pIdx = db_purch.findIndex(h => h.timestamp == purchTimestamp);
+            if (pIdx === -1) return showToast('Purchase record not found.', 'error');
+            const rec = db_purch[pIdx];
+            showConfirm(
+                `⚠️ Reverse purchase of ${rec.qty} × "${rec.name}" (₦${(rec.totalCost||0).toLocaleString()})? Stock will be deducted and money refunded to balance.`,
+                async () => {
+                    const iIdx = db_inv.findIndex(x => x.id == rec.productId || x.name === rec.name);
+                    if (iIdx > -1) {
+                        db_inv[iIdx].stock = Math.max(0, db_inv[iIdx].stock - rec.qty);
+                        // Restore previous cost price if we have it
+                        if (rec.prevCost !== undefined) db_inv[iIdx].cost = rec.prevCost;
+                    }
+                    db_finance += (rec.totalCost || rec.unitCost * rec.qty || 0);
+                    db_purch.splice(pIdx, 1);
+                    await persist();
+                    renderProcurement(); renderInventory(); renderPOS(); renderAccounting();
+                    showToast(`🔁 Purchase reversed. ₦${(rec.totalCost||0).toLocaleString()} returned to balance.`, 'success');
+                }
+            );
         }
 
         // ===================== ACCOUNTING / ANALYTICS =====================
