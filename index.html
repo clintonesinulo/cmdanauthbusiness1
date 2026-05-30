@@ -1430,7 +1430,10 @@ function staffNormalizeProducts(items) {
         // immediately seen as offline by every poller.  keepalive:true means
         // the browser sends this even while the page is being destroyed.
         function _markOfflineSync(staffId) {
-            if (!_binId || !staffId) return;
+            if (!staffId) return;
+            // Always write lastSeen to localStorage — works even without network
+            localStorage.setItem('v72_lastseen_' + staffId, String(Date.now()));
+            if (!_binId) return;
             fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1449,12 +1452,18 @@ function staffNormalizeProducts(items) {
                 const now = Date.now();
                 db_staff.forEach(s => {
                     const p = presence[String(s.id)];
-                    if (p && p.ts && p.ts > 1000) {          // ts=1 = explicit offline
-                        s.online   = (now - p.ts) < PRESENCE_STALE_MS;
-                        s.lastSeen = p.ts;
+                    if (p && p.ts && p.ts > 1) {
+                        const isOnline = p.ts > 1000 && (now - p.ts) < PRESENCE_STALE_MS;
+                        s.online = isOnline;
+                        // ts=1 means explicit offline — use current time as lastSeen
+                        s.lastSeen = p.ts > 1000 ? p.ts : (now - PRESENCE_STALE_MS - 1000);
+                        // Persist lastSeen separately so it survives db_staff reloads
+                        localStorage.setItem('v72_lastseen_' + s.id, String(s.lastSeen));
                     } else {
                         s.online = false;
-                        if (p && p.ts && p.ts > 1) s.lastSeen = p.ts;
+                        // Restore lastSeen from localStorage if presence has no record yet
+                        const stored = localStorage.getItem('v72_lastseen_' + s.id);
+                        if (stored && !s.lastSeen) s.lastSeen = parseInt(stored, 10);
                     }
                 });
             } catch(e) {}
@@ -1802,6 +1811,7 @@ function staffNormalizeProducts(items) {
 
             // Set staff online status immediately on login
             setStaffOnlineStatus(user.id, true);
+            localStorage.setItem('v72_lastseen_' + user.id, String(Date.now()));
             _writeHeartbeat(user.id);
             _syncPresenceFromCloud().then(() => renderStaff());
 
@@ -1940,16 +1950,43 @@ function staffNormalizeProducts(items) {
         // ===================== THERMAL RECEIPT PRINTING =====================
         function printThermalReceipt(inv) {
             const w = window.open('', '_blank', 'width=400,height=600');
-            
+
             let itemsHtml = inv.items.map(i => `
                 <tr>
                     <td style="padding: 3px 0;">${i.name}</td>
                     <td style="text-align: center;">${i.qty}</td>
-                    <td style="text-align: right;">₦${(i.qty * i.price).toLocaleString()}</td>
+                    <td style="text-align: right;">&#8358;${(i.qty * i.price).toLocaleString()}</td>
                 </tr>
             `).join('');
 
-            // BUG FIX 4: Ensured window.print() only fires after the document is completely ready
+            // ── Credit / Instalment block ─────────────────────────────────
+            let creditHtml = '';
+            if (inv.isCredit || inv.amountPaid !== undefined) {
+                const totalDebt   = inv.total || 0;
+                const amtPaid     = inv.amountPaid !== undefined ? inv.amountPaid : (inv.thisPayment || 0);
+                const balanceLeft = Math.max(0, totalDebt - amtPaid);
+                const thisPayment = inv.thisPayment || 0;
+                const instList    = (inv.instalments || []).map(i =>
+                    `<tr><td>${i.date}</td><td style="text-align:right;">&#8358;${i.amount.toLocaleString()}${i.note ? ' ('+i.note+')' : ''}</td></tr>`
+                ).join('');
+
+                creditHtml = `
+                <hr style="border-top:2px dashed #000; margin:8px 0;">
+                <div style="text-align:center; font-weight:bold; font-size:13px; margin-bottom:6px;">
+                    *** CREDIT / INSTALMENT RECORD ***
+                </div>
+                ${thisPayment > 0 ? `<div style="display:flex;justify-content:space-between;"><span>Payment This Receipt:</span><span style="font-weight:bold;">&#8358;${thisPayment.toLocaleString()}</span></div>` : ''}
+                <div style="display:flex;justify-content:space-between;margin-top:4px;"><span>Total Invoice:</span><span>&#8358;${totalDebt.toLocaleString()}</span></div>
+                <div style="display:flex;justify-content:space-between;"><span>Total Paid So Far:</span><span style="color:#000; font-weight:bold;">&#8358;${amtPaid.toLocaleString()}</span></div>
+                <div style="display:flex;justify-content:space-between; font-size:14px; font-weight:900; border-top:1px solid #000; padding-top:4px; margin-top:4px;">
+                    <span>BALANCE STILL OWED:</span>
+                    <span>${balanceLeft > 0 ? '&#8358;'+balanceLeft.toLocaleString() : 'FULLY PAID ✓'}</span>
+                </div>
+                ${inv.dueDate ? `<div style="text-align:center; margin-top:4px; font-size:11px;">Expected full payment by: <b>${inv.dueDate}</b></div>` : ''}
+                ${instList ? `<table style="margin-top:8px; font-size:11px;"><thead><tr><th style="text-align:left;">Payment Date</th><th style="text-align:right;">Amount</th></tr></thead><tbody>${instList}</tbody></table>` : ''}
+                <hr style="border-top:2px dashed #000; margin:8px 0;">`;
+            }
+
             const html = `
             <!DOCTYPE html>
             <html>
@@ -1982,12 +2019,13 @@ function staffNormalizeProducts(items) {
                     <tbody>${itemsHtml}</tbody>
                 </table>
                 <div class="totals">
-                    <div><span>Subtotal:</span> <span>₦${inv.subtotal.toLocaleString()}</span></div>
-                    <div><span>Discount${inv.discountLabel ? ' (' + inv.discountLabel + ')' : ''}:</span> <span>-₦${inv.discount.toLocaleString()}</span></div>
-                    <div style="font-size: 15px; border-top: 2px solid #000; padding-top: 5px; margin-top: 5px;"><span>TOTAL:</span> <span>₦${inv.total.toLocaleString()}</span></div>
+                    <div><span>Subtotal:</span> <span>&#8358;${(inv.subtotal||inv.total).toLocaleString()}</span></div>
+                    ${(inv.discount||0) > 0 ? `<div><span>Discount${inv.discountLabel ? ' ('+inv.discountLabel+')' : ''}:</span> <span>-&#8358;${inv.discount.toLocaleString()}</span></div>` : ''}
+                    <div style="font-size: 15px; border-top: 2px solid #000; padding-top: 5px; margin-top: 5px;"><span>TOTAL:</span> <span>&#8358;${inv.total.toLocaleString()}</span></div>
                 </div>
+                ${creditHtml}
                 <hr style="border-top: 1px dashed #000; margin: 10px 0;">
-                <div class="text-center">Thank you for your business!</div>
+                <div class="text-center">${(inv.amountPaid||0) >= (inv.total||0) && inv.isCredit ? 'Thank you — account fully settled!' : 'Thank you for your business!'}</div>
                 <script>
                     window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); }
                 <\/script>
@@ -2359,6 +2397,12 @@ function staffNormalizeProducts(items) {
                     _discountType = 'flat'; setDiscountType('flat');
                     calculateTotal();
                     renderPOS(); renderStaff(); renderReceipts(); renderPendingPayments();
+                    // Attach credit info so the receipt shows debt/balance
+                    currentInvoice.isCredit   = true;
+                    currentInvoice.amountPaid = deposit;
+                    currentInvoice.thisPayment = deposit;
+                    currentInvoice.dueDate    = dueDate;
+                    currentInvoice.instalments = instalments;
                     printThermalReceipt(currentInvoice);
                     const msg = deposit > 0
                         ? `⏳ Credit recorded. Deposit ₦${deposit.toLocaleString()} noted. Balance: ₦${(finalTotal-deposit).toLocaleString()}`
@@ -2538,43 +2582,65 @@ function staffNormalizeProducts(items) {
             p.instalments.push({ date: new Date().toLocaleDateString(), amount, note, ts: Date.now() });
             p.amountPaid = (p.amountPaid || 0) + amount;
 
-            // ── Every instalment received hits the balance immediately ──
+            // ── Every instalment hits balance immediately; update navbar now ──
             db_finance += amount;
-            persistLocalOnly(); // update navbar balance right away
+            const navEl = document.getElementById('account-balance-nav');
+            if (navEl) navEl.innerText = db_finance.toLocaleString();
 
             closeInstalmentModal();
 
+            // Helper: build items array for receipt
+            const _receiptItems = (p.items || []).map(it => {
+                const prod = db_inv.find(x => x.id == it.id);
+                return { id: it.id, name: prod ? prod.name : 'Item', qty: it.qty,
+                         price: prod ? prod.price : 0, cost: prod ? prod.cost : 0 };
+            });
+
             // Auto-complete if fully paid
             if (p.amountPaid >= p.total) {
-                // Post to accounts & sales for analytics (do NOT add to finance again)
-                db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
-                    date: p.date, total: p.total, profit: p.profit, cost: p.cost,
+                // Post to analytics/sales only now — finance already has all the money
+                db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier,
+                    timestamp: p.timestamp, date: p.date,
+                    total: p.total, profit: p.profit, cost: p.cost,
                     paymentMethod: 'Credit (Instalment — Completed)', instalments: p.instalments });
-                db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
-                    date: p.date, total: p.total, profit: p.profit, cost: p.cost,
-                    paymentMethod: 'Credit (Instalment — Completed)', items: p.items, instalments: p.instalments });
-                // finance already has all collected amounts — do NOT add p.total again
+                db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier,
+                    timestamp: p.timestamp, date: p.date,
+                    total: p.total, profit: p.profit, cost: p.cost,
+                    paymentMethod: 'Credit (Instalment — Completed)',
+                    items: p.items, instalments: p.instalments });
                 db_pending.splice(idx, 1);
                 await persist();
-                // Print a completion receipt
-                const fullSale = {
-                    inv: p.inv, customer: p.customer, cashier: p.cashier,
-                    timestamp: Date.now(),
+                // Full-payment receipt — show settled status
+                printThermalReceipt({
+                    inv: p.inv, customer: p.customer, cashier: user ? user.name : p.cashier,
                     date: new Date().toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' }),
                     paymentMethod: 'Credit (Fully Paid)',
-                    items: (p.items||[]).map(it => {
-                        const prod = db_inv.find(x => x.id == it.id);
-                        return { id: it.id, name: prod ? prod.name : 'Item', qty: it.qty, price: prod ? prod.price : 0, cost: prod ? prod.cost : 0 };
-                    }),
-                    subtotal: p.subtotal || p.total, discount: p.discount || 0, total: p.total, profit: p.profit
-                };
+                    isCredit: true, thisPayment: amount,
+                    amountPaid: p.total,   // show as fully paid
+                    dueDate: p.dueDate, instalments: p.instalments,
+                    items: _receiptItems,
+                    subtotal: p.subtotal || p.total, discount: p.discount || 0,
+                    total: p.total, profit: p.profit
+                });
                 renderPendingPayments(); renderReceipts(); renderAccounting();
-                printThermalReceipt(fullSale);
                 showToast(`🎉 ${invNo} fully paid! Receipt printing and accounts updated.`, 'success');
             } else {
+                // Partial — save then print instalment receipt
                 await persist();
                 renderPendingPayments();
-                showToast(`✅ ₦${amount.toLocaleString()} recorded. Balance: ₦${(p.total - p.amountPaid).toLocaleString()}`, 'success');
+                printThermalReceipt({
+                    inv: p.inv, customer: p.customer, cashier: user ? user.name : p.cashier,
+                    date: new Date().toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' }),
+                    paymentMethod: 'Credit (Instalment Payment)',
+                    isCredit: true, thisPayment: amount,
+                    amountPaid: p.amountPaid,
+                    dueDate: p.dueDate, instalments: p.instalments,
+                    items: _receiptItems,
+                    subtotal: p.subtotal || p.total, discount: p.discount || 0,
+                    total: p.total, profit: p.profit
+                });
+                const remaining = p.total - p.amountPaid;
+                showToast(`✅ ₦${amount.toLocaleString()} recorded. Balance left: ₦${remaining.toLocaleString()}`, 'success');
             }
         }
 
@@ -3024,17 +3090,21 @@ function staffNormalizeProducts(items) {
                 const badge = s.status === 'active' ? 'badge-active' : (s.status === 'deleted' ? 'badge-deleted' : 'badge-suspended');
                 const access = s.role === 'admin' ? 'All ERP modules' : s.role === 'inventory' ? 'POS + Inventory + Purchases' : 'POS only';
                 
-                // Online/offline
+                // Online/offline — restore lastSeen from localStorage if not on object
                 const isOnline = !!s.online;
-                const relTime = s.lastSeen ? (() => {
-                    const mins = Math.floor((Date.now() - s.lastSeen) / 60000);
+                const storedTs  = parseInt(localStorage.getItem('v72_lastseen_' + s.id) || '0', 10);
+                const lastSeenTs = s.lastSeen || (storedTs > 0 ? storedTs : 0);
+                const relTime = lastSeenTs > 0 ? (() => {
+                    const mins = Math.floor((Date.now() - lastSeenTs) / 60000);
                     if (mins < 1) return 'just now';
                     if (mins < 60) return `${mins}m ago`;
                     const hrs = Math.floor(mins / 60);
                     if (hrs < 24) return `${hrs}h ago`;
-                    return new Date(s.lastSeen).toLocaleDateString();
+                    return new Date(lastSeenTs).toLocaleDateString();
                 })() : 'never';
-                const onlineHtml = `<span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>${isOnline ? '<span class="online-tag">Online</span>' : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">Last seen: ${relTime}</small>`}`;
+                const onlineHtml = `<span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>${isOnline
+                    ? '<span class="online-tag">Online</span>'
+                    : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">Last seen: ${relTime}</small>`}`;
 
                 // Calculate Staff Performance
                 const staffSales = db_sales.filter(sale => sale.cashier === s.name);
