@@ -915,18 +915,27 @@
 // placeholder - renderPOS and selectVariant are defined in the main script below
 
 function staffNormalizeProducts(items) {
-            return (Array.isArray(items) ? items : []).map(p => ({
-                id: p.id || Date.now(),
-                name: p.name || '',
-                style: p.style || '',
-                color: p.color || '',
-                size: p.size || 'N/A',
-                barcode: p.barcode || '',
-                cost: Number.isFinite(+p.cost) ? +p.cost : 0,
-                price: Number.isFinite(+p.price) ? +p.price : 0,
-                stock: Number.isFinite(+p.stock) ? +p.stock : 0,
-                sales: Number.isFinite(+p.sales) ? +p.sales : 0
-            }));
+            return (Array.isArray(items) ? items : []).map(p => {
+                const cost  = Number.isFinite(+p.cost)  ? +p.cost  : 0;
+                const stock = Number.isFinite(+p.stock) ? +p.stock : 0;
+                // Migrate: if no costLayers yet, seed one from existing cost+stock
+                const costLayers = (p.costLayers && p.costLayers.length)
+                    ? p.costLayers
+                    : (stock > 0 && cost > 0 ? [{ qty: stock, cost }] : []);
+                return {
+                    id: p.id || Date.now(),
+                    name: p.name || '',
+                    style: p.style || '',
+                    color: p.color || '',
+                    size: p.size || 'N/A',
+                    barcode: p.barcode || '',
+                    cost,
+                    price: Number.isFinite(+p.price) ? +p.price : 0,
+                    stock,
+                    sales: Number.isFinite(+p.sales) ? +p.sales : 0,
+                    costLayers,
+                };
+            });
         }
 
 
@@ -2150,7 +2159,8 @@ function staffNormalizeProducts(items) {
                 if (!stockItem) return showToast('Item removed from inventory.', 'error');
                 if (stockItem.stock < cItem.qty) return showToast(`Failed: ${stockItem.name} has only ${stockItem.stock} left.`, 'error');
                 subtotal += stockItem.price * cItem.qty;
-                totalCost += stockItem.cost * cItem.qty;
+                // Use FIFO to get the actual cost of exactly these units
+                totalCost += _fifoConsumeCost(stockItem.costLayers, cItem.qty, stockItem.cost);
             }
 
             const finalTotal = Math.max(0, subtotal - disc);
@@ -2160,10 +2170,17 @@ function staffNormalizeProducts(items) {
             const timestamp = Date.now();
             const receiptDateTime = new Date(timestamp).toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' });
 
-            // Deduct stock regardless of payment method
+            // Deduct stock + consume FIFO cost layers regardless of payment method
             saleItems.forEach(c => {
                 const idx = db_inv.findIndex(x => x.id == c.id);
-                if (idx > -1) { db_inv[idx].stock -= c.qty; db_inv[idx].sales = (db_inv[idx].sales || 0) + c.qty; }
+                if (idx > -1) {
+                    db_inv[idx].stock -= c.qty;
+                    db_inv[idx].sales  = (db_inv[idx].sales || 0) + c.qty;
+                    _fifoDeductLayers(db_inv[idx].costLayers, c.qty);
+                    // Update display cost to reflect remaining layers
+                    if (db_inv[idx].costLayers && db_inv[idx].costLayers.length)
+                        db_inv[idx].cost = _weightedAvgCost(db_inv[idx].costLayers);
+                }
             });
 
             currentInvoice = {
@@ -2332,12 +2349,16 @@ function staffNormalizeProducts(items) {
                 const aIdx = db_acc.findIndex(x => x.inv === invNo);
                 if (sIdx === -1 && aIdx === -1) return showToast('Sale record not found.', 'error');
                 const sale = db_sales[sIdx] || db_acc[aIdx];
-                // Restore stock
+                // Restore stock + re-add a cost layer for the returned units
                 (sale.items || []).forEach(it => {
                     const iIdx = db_inv.findIndex(x => x.id == it.id);
                     if (iIdx > -1) {
                         db_inv[iIdx].stock += it.qty;
                         db_inv[iIdx].sales = Math.max(0, (db_inv[iIdx].sales || 0) - it.qty);
+                        // Return units at the cost they were sold at
+                        if (!db_inv[iIdx].costLayers) db_inv[iIdx].costLayers = [];
+                        db_inv[iIdx].costLayers.unshift({ qty: it.qty, cost: it.cost || db_inv[iIdx].cost });
+                        db_inv[iIdx].cost = _weightedAvgCost(db_inv[iIdx].costLayers);
                     }
                 });
                 // Reverse finance
@@ -2381,8 +2402,22 @@ function staffNormalizeProducts(items) {
             if (data.price < data.cost) showToast('Sale price is below cost price; margin will be negative.', 'warning');
             if (id) {
                 const idx = db_inv.findIndex(x => x.id == id);
-                db_inv[idx] = { ...db_inv[idx], ...data, sales: db_inv[idx].sales || 0 };
-            } else { db_inv.push({ id: Date.now(), ...data, sales: 0 }); }
+                const existing = db_inv[idx];
+                const newCost = data.cost;
+                // If cost changed, start a new FIFO layer for remaining stock
+                let layers = existing.costLayers ? [...existing.costLayers] : [];
+                if (newCost !== existing.cost && existing.stock > 0) {
+                    // Close out the old layers and start fresh with updated cost
+                    // representing the re-valued remaining stock
+                    layers = [{ qty: existing.stock, cost: newCost }];
+                }
+                db_inv[idx] = { ...existing, ...data, sales: existing.sales || 0, costLayers: layers };
+            } else {
+                const newId = Date.now();
+                db_inv.push({ id: newId, ...data, sales: 0,
+                    costLayers: data.stock > 0 && data.cost > 0 ? [{ qty: data.stock, cost: data.cost }] : []
+                });
+            }
             persist(); renderInventory(); renderPOS(); renderProcurement(); closeModals(); showToast('Product saved!');
         }
 
@@ -2401,7 +2436,10 @@ function staffNormalizeProducts(items) {
                     <td><b>${escapeHtml(p.name)}</b></td>
                     <td>${escapeHtml(p.style || '-')} | ${escapeHtml(p.color || '-')} | Size: ${escapeHtml(p.size || 'N/A')}</td>
                     <td style="font-family:monospace;">${escapeHtml(p.barcode || '-')}</td>
-                    <td style="color:#c0392b; font-weight:bold;">₦${cost.toLocaleString()}</td>
+                    <td style="color:#c0392b; font-weight:bold;" title="${(p.costLayers||[]).map(l=>`${l.qty} units @ ₦${l.cost.toLocaleString()}`).join(' | ') || 'No layers'}">
+                        ₦${cost.toLocaleString()}
+                        ${p.costLayers && p.costLayers.length > 1 ? `<br><small style="color:#e67e22;font-size:10px;">${p.costLayers.length} batches</small>` : ''}
+                    </td>
                     <td style="color:var(--odoo-teal); font-weight:bold;">₦${price.toLocaleString()}</td>
                     <td class="${marginClass}">${margin.toFixed(1)}%</td>
                     <td><span class="badge ${p.stock > 5 ? 'badge-active' : 'badge-deleted'}">${p.stock}</span></td>
@@ -2411,6 +2449,53 @@ function staffNormalizeProducts(items) {
                     </td>
                 </tr>`;
             }).join('');
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        //  FIFO COST LAYER HELPERS
+        //  costLayers = [{ qty, cost }, ...] oldest first
+        //  When stock is purchased a new layer is appended.
+        //  When stock is sold, units are consumed from the front (oldest = cheapest
+        //  or whatever was bought first), preserving accurate profit per batch.
+        // ═══════════════════════════════════════════════════════════════
+
+        // Weighted average cost across all layers (for display only)
+        function _weightedAvgCost(layers) {
+            if (!layers || !layers.length) return 0;
+            let totalQty = 0, totalVal = 0;
+            layers.forEach(l => { totalQty += l.qty; totalVal += l.qty * l.cost; });
+            return totalQty > 0 ? totalVal / totalQty : 0;
+        }
+
+        // Compute FIFO cost for selling `qty` units WITHOUT mutating layers
+        function _fifoConsumeCost(layers, qty, fallbackCost) {
+            if (!layers || !layers.length) return fallbackCost * qty;
+            let remaining = qty, cost = 0;
+            const clone = layers.map(l => ({ ...l }));
+            for (const layer of clone) {
+                if (remaining <= 0) break;
+                const take = Math.min(layer.qty, remaining);
+                cost += take * layer.cost;
+                remaining -= take;
+            }
+            // If layers ran out (shouldn't happen in normal use), use fallback
+            if (remaining > 0) cost += remaining * fallbackCost;
+            return cost;
+        }
+
+        // Mutate layers — deduct `qty` units FIFO (oldest first)
+        function _fifoDeductLayers(layers, qty) {
+            if (!layers) return;
+            let remaining = qty;
+            while (remaining > 0 && layers.length > 0) {
+                if (layers[0].qty <= remaining) {
+                    remaining -= layers[0].qty;
+                    layers.shift();
+                } else {
+                    layers[0].qty -= remaining;
+                    remaining = 0;
+                }
+            }
         }
 
         // ===================== PROCUREMENT =====================
@@ -2463,7 +2548,11 @@ function staffNormalizeProducts(items) {
             const prevCost = db_inv[pIdx].cost;
             db_finance -= totalCost;
             db_inv[pIdx].stock += qty;
-            db_inv[pIdx].cost   = unitCost;
+            // Add a new FIFO cost layer — do NOT overwrite old layers
+            if (!db_inv[pIdx].costLayers) db_inv[pIdx].costLayers = [];
+            db_inv[pIdx].costLayers.push({ qty, cost: unitCost });
+            // Display cost = weighted average across all layers
+            db_inv[pIdx].cost = _weightedAvgCost(db_inv[pIdx].costLayers);
             db_purch.push({
                 date: new Date().toLocaleDateString(),
                 name: db_inv[pIdx].name,
