@@ -473,6 +473,9 @@
 <div class="bottom-nav-item" id="bn-acc" onclick="switchApp('accounting')" style="display:none;">
 <span class="nav-icon">📊</span><span>Reports</span>
 </div>
+<div class="bottom-nav-item" id="bn-finance" onclick="switchApp('finance')" style="display:none;">
+<span class="nav-icon">💳</span><span>Finance</span>
+</div>
 <div class="bottom-nav-item" id="bn-staff" onclick="switchApp('staff')">
 <span class="nav-icon">👥</span><span>Staff</span>
 </div>
@@ -546,6 +549,7 @@
 <div class="app-icon" id="icon-inv" onclick="switchApp('inventory')" title="Inventory">📦</div>
 <div class="app-icon" id="icon-proc" onclick="switchApp('procurement')" title="Purchases">💰</div>
 <div class="app-icon" id="icon-acc" onclick="switchApp('accounting')" title="Reports">📊</div>
+<div class="app-icon" id="icon-finance" onclick="switchApp('finance')" title="Finance Ledger">💳</div>
 <div class="app-icon" id="icon-staff" onclick="switchApp('staff')" title="Staff">👥</div>
 <div class="app-icon" id="icon-biz" onclick="switchApp('business')" title="Settings">🏢</div>
 <div style="margin-top:auto; width: 100%; display:flex; flex-direction: column; align-items: center;">
@@ -960,9 +964,94 @@
 </div>
 </div>
 
-<script>
+<!-- ===== UPDATE BALANCE MODAL ===== -->
+<div id="modal-update-balance" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:8200; justify-content:center; align-items:center; padding:16px;">
+  <div class="card" style="width:min(440px,96vw); max-height:92vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+      <h3 style="color:var(--odoo-purple);">💳 Update Account Balance</h3>
+      <button onclick="document.getElementById('modal-update-balance').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:#7f8c8d;padding:4px;">✖</button>
+    </div>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Transaction Type</label>
+    <select id="ub-type" style="margin-bottom:12px;">
+      <option value="add">➕ Add Money (Income / Received)</option>
+      <option value="remove">➖ Remove Money (Expense / Payment)</option>
+    </select>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Amount (₦) <span style="color:#e74c3c;">*</span></label>
+    <input id="ub-amount" type="number" min="1" placeholder="e.g. 50000" style="margin-bottom:12px;"/>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Reason / Description <span style="color:#e74c3c;">*</span></label>
+    <input id="ub-reason" type="text" placeholder="e.g. Transport subsidy, Event logistics, Loan repayment…" style="margin-bottom:12px;"/>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Category / Product</label>
+    <input id="ub-category" type="text" placeholder="e.g. Home / General, New Hoodie, Birthlehem…" style="margin-bottom:18px;" list="ub-cat-list"/>
+    <datalist id="ub-cat-list">
+      <option value="Home / General"/><option value="New Hoodie"/><option value="Old Hoodie"/>
+      <option value="Ward Coat"/><option value="Paediatrics Growth Chart"/><option value="Birthlehem"/>
+      <option value="Tote Bag"/><option value="Book Sales"/><option value="Others"/>
+    </datalist>
+    <div style="display:flex;gap:10px;">
+      <button class="btn-odoo btn-teal" style="flex:1;" onclick="confirmUpdateBalance()">✅ Confirm Update</button>
+      <button onclick="document.getElementById('modal-update-balance').style.display='none'" style="flex:1;background:none;border:1px solid #ddd;border-radius:6px;padding:11px;cursor:pointer;font-size:14px;font-weight:600;color:#555;">Cancel</button>
+    </div>
+  </div>
+</div>
 
-// placeholder - renderPOS and selectVariant are defined in the main script below
+<!-- ===== FINANCE LEDGER SCREEN ===== -->
+<div class="screen" id="finance">
+  <div style="display:flex; justify-content:space-between; margin-bottom:16px; gap:10px; flex-wrap:wrap; align-items:flex-start;">
+    <div>
+      <h2>💳 Finance Ledger</h2>
+      <div class="mini">Unified record of all income and expenditure — product sales, purchases and manual entries.</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn-odoo btn-teal" style="padding:8px 14px;font-size:13px;" onclick="exportFinanceLedgerExcel()">📥 Export Excel</button>
+    </div>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="metric-grid" id="finance-metrics"></div>
+
+  <!-- Filters -->
+  <div class="card" style="padding:14px 16px; margin-bottom:16px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <div>
+        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Time Period</label>
+        <select id="fl-period" onchange="renderFinanceLedger()" style="margin:0;width:160px;padding:8px 10px;font-size:13px;">
+          <option value="all">All Time</option>
+          <option value="daily">Today</option>
+          <option value="weekly">This Week</option>
+          <option value="biweekly">Last 2 Weeks</option>
+          <option value="monthly">This Month</option>
+          <option value="yearly">This Year</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Type</label>
+        <select id="fl-type" onchange="renderFinanceLedger()" style="margin:0;width:140px;padding:8px 10px;font-size:13px;">
+          <option value="all">All Transactions</option>
+          <option value="income">Income Only</option>
+          <option value="expense">Expenses Only</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Group By</label>
+        <select id="fl-group" onchange="renderFinanceLedger()" style="margin:0;width:150px;padding:8px 10px;font-size:13px;">
+          <option value="none">None (Chronological)</option>
+          <option value="product">Product / Category</option>
+          <option value="month">Month</option>
+          <option value="type">Income vs Expense</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:160px;">
+        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Search</label>
+        <input id="fl-search" type="text" placeholder="Search description…" oninput="renderFinanceLedger()" style="margin:0;padding:8px 10px;font-size:13px;"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ledger table -->
+  <div id="finance-ledger-body"></div>
+</div>
+
+<script>
 
 function staffNormalizeProducts(items) {
             return (Array.isArray(items) ? items : []).map(p => {
@@ -1030,16 +1119,17 @@ function staffNormalizeProducts(items) {
                 return rest;
             });
             return {
-                biz:     db_biz,
-                staff:   staffClean,
-                inv:     db_inv,
-                sales:   db_sales,
-                acc:     db_acc,
-                purch:   db_purch,
-                chat:    db_chat,
-                finance: db_finance,
-                pending: db_pending,
-                _ts:     Date.now()
+                biz:        db_biz,
+                staff:      staffClean,
+                inv:        db_inv,
+                sales:      db_sales,
+                acc:        db_acc,
+                purch:      db_purch,
+                chat:       db_chat,
+                finance:    db_finance,
+                pending:    db_pending,
+                financeLog: db_financeLog,
+                _ts:        Date.now()
             };
         }
 
@@ -1063,14 +1153,16 @@ function staffNormalizeProducts(items) {
             if (data.acc     !== undefined) db_acc     = data.acc;
             if (data.purch   !== undefined) db_purch   = data.purch;
             if (data.chat    !== undefined) db_chat    = data.chat;
-            if (data.finance !== undefined) db_finance = data.finance;
-            if (data.pending !== undefined) db_pending = data.pending;
+            if (data.finance    !== undefined) db_finance    = data.finance;
+            if (data.pending    !== undefined) db_pending    = data.pending;
+            if (data.financeLog !== undefined) db_financeLog = data.financeLog;
         }
 
         function _stateHash(data) {
             return JSON.stringify({ biz: data.biz, staff: data.staff, inv: data.inv,
                                     sales: data.sales, acc: data.acc, purch: data.purch,
-                                    chat: data.chat, finance: data.finance, pending: data.pending });
+                                    chat: data.chat, finance: data.finance, pending: data.pending,
+                                    financeLog: data.financeLog });
         }
 
         // ── Firebase RTDB REST: create store ──────────────────────────────────
@@ -1529,6 +1621,7 @@ function staffNormalizeProducts(items) {
         let db_sales   = JSON.parse(localStorage.getItem('v72_sales'))   || [];
         let db_finance = parseFloat(localStorage.getItem('v72_finance')) || 0.0;
         let db_pending = JSON.parse(localStorage.getItem('v72_pending')) || [];
+        let db_financeLog = JSON.parse(localStorage.getItem('v72_financeLog')) || [];
 
         let user = null;
         let cart = [];
@@ -1817,9 +1910,10 @@ function staffNormalizeProducts(items) {
 
 
             const isAdmin = user.role === 'admin';
-            ['icon-inv', 'icon-acc', 'icon-biz', 'icon-proc'].forEach(id => {
+            ['icon-inv', 'icon-acc', 'icon-biz', 'icon-proc', 'icon-finance'].forEach(id => {
                 const el = document.getElementById(id);
-                el.style.display = (id === 'icon-acc' || id === 'icon-biz') ? (isAdmin ? 'flex' : 'none') : (canAccess(id === 'icon-inv' ? 'inventory' : 'procurement') ? 'flex' : 'none');
+                if (!el) return;
+                el.style.display = (id === 'icon-acc' || id === 'icon-biz' || id === 'icon-finance') ? (isAdmin ? 'flex' : 'none') : (canAccess(id === 'icon-inv' ? 'inventory' : 'procurement') ? 'flex' : 'none');
             });
             // Everyone can see Receipts and Staff icons
             document.getElementById('icon-receipts').style.display = 'flex';
@@ -1834,6 +1928,7 @@ function staffNormalizeProducts(items) {
             setMobileNav('bn-inv', canInv);
             setMobileNav('bn-proc', canProc);
             setMobileNav('bn-acc', isAdmin);
+            setMobileNav('bn-finance', isAdmin);
             setMobileNav('bn-biz', isAdmin);
 
             fillBusinessForm();
@@ -1879,6 +1974,7 @@ function staffNormalizeProducts(items) {
             localStorage.setItem('v72_sales', JSON.stringify(db_sales));
             localStorage.setItem('v72_finance', db_finance.toString());
             localStorage.setItem('v72_pending', JSON.stringify(db_pending));
+            localStorage.setItem('v72_financeLog', JSON.stringify(db_financeLog));
             document.getElementById('account-balance-nav').innerText = `${db_finance.toLocaleString()}`;
         }
 
@@ -1889,11 +1985,41 @@ function staffNormalizeProducts(items) {
 
         // ===================== GLOBAL FUNCTIONS (Fixed) =====================
         function promptUpdateBalance() {
-            const val = parseFloat(prompt("Enter amount to ADD (+) or REMOVE (-):"));
-            if(isNaN(val)) return alert("Invalid amount");
-            db_finance += val;
-            persist();
-            showToast("Balance updated successfully");
+            document.getElementById('modal-update-balance').style.display = 'flex';
+            document.getElementById('ub-amount').value = '';
+            document.getElementById('ub-reason').value = '';
+            document.getElementById('ub-type').value = 'add';
+            document.getElementById('ub-category').value = 'General';
+        }
+
+        async function confirmUpdateBalance() {
+            const type     = document.getElementById('ub-type').value;
+            const rawAmt   = parseFloat(document.getElementById('ub-amount').value);
+            const reason   = document.getElementById('ub-reason').value.trim();
+            const category = document.getElementById('ub-category').value.trim() || 'General';
+            if (!rawAmt || rawAmt <= 0)  return showToast('Enter a valid amount.', 'error');
+            if (!reason)                 return showToast('Please state a reason.', 'error');
+            const delta = type === 'add' ? rawAmt : -rawAmt;
+            db_finance += delta;
+
+            // Record in unified finance ledger
+            if (!db_financeLog) db_financeLog = [];
+            db_financeLog.push({
+                id: Date.now(),
+                timestamp: Date.now(),
+                type: type === 'add' ? 'income' : 'expense',
+                source: 'manual',
+                category,
+                description: reason,
+                product: category,
+                amount: rawAmt,
+                by: user ? user.name : 'Admin'
+            });
+
+            document.getElementById('modal-update-balance').style.display = 'none';
+            await persist();
+            renderFinanceLedger();
+            showToast(`Balance ${type === 'add' ? 'increased' : 'reduced'} by ₦${rawAmt.toLocaleString()} — ${reason}`);
         }
 
         document.addEventListener('keypress', function(e){
@@ -1930,18 +2056,19 @@ function staffNormalizeProducts(items) {
             document.getElementById(id).classList.add('active');
 
             // Desktop sidebar active state
-            const mapping = { 'pos': null, 'inventory': 'icon-inv', 'procurement': 'icon-proc', 'accounting': 'icon-acc', 'staff': 'icon-staff', 'business': 'icon-biz', 'receipts': 'icon-receipts' };
+            const mapping = { 'pos': null, 'inventory': 'icon-inv', 'procurement': 'icon-proc', 'accounting': 'icon-acc', 'finance': 'icon-finance', 'staff': 'icon-staff', 'business': 'icon-biz', 'receipts': 'icon-receipts' };
             if (mapping[id]) document.getElementById(mapping[id]).classList.add('active');
             else document.querySelector('.apps-sidebar .app-icon:first-child').classList.add('active');
 
             // Mobile bottom nav active state
             document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
-            const bnMap = { 'pos': 'bn-pos', 'receipts': 'bn-receipts', 'inventory': 'bn-inv', 'procurement': 'bn-proc', 'accounting': 'bn-acc', 'staff': 'bn-staff', 'business': 'bn-biz' };
+            const bnMap = { 'pos': 'bn-pos', 'receipts': 'bn-receipts', 'inventory': 'bn-inv', 'procurement': 'bn-proc', 'accounting': 'bn-acc', 'staff': 'bn-staff', 'business': 'bn-biz', 'finance': 'bn-finance' };
             if (bnMap[id]) { const el = document.getElementById(bnMap[id]); if (el) el.classList.add('active'); }
 
             if (id === 'inventory') renderInventory();
             if (id === 'procurement') renderProcurement();
             if (id === 'accounting') renderAccounting();
+            if (id === 'finance') renderFinanceLedger();
             if (id === 'staff') renderStaff();
             if (id === 'pos') renderPOS();
             if (id === 'receipts') renderReceipts();
@@ -2414,6 +2541,13 @@ function staffNormalizeProducts(items) {
                 db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
                 db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
                 db_finance += finalTotal;
+                // Log to unified finance ledger — one entry per product line
+                if (!db_financeLog) db_financeLog = [];
+                saleItems.forEach(c => {
+                    const p = db_inv.find(x => x.id == c.id);
+                    const lineTotal = (p ? p.price : 0) * c.qty;
+                    db_financeLog.push({ id: Date.now() + Math.random(), timestamp, type: 'income', source: 'sale', category: p ? p.name : 'Unknown', product: p ? p.name : 'Unknown', description: `Sale: ${c.qty}× ${p ? p.name : 'Item'} (${invNum})`, amount: lineTotal, by: cashier });
+                });
                 const sIdx = db_staff.findIndex(x => x.id == user.id);
                 if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
                 persist();
@@ -2904,14 +3038,29 @@ function staffNormalizeProducts(items) {
             // Display cost = weighted average across all layers
             db_inv[pIdx].cost = _weightedAvgCost(db_inv[pIdx].costLayers);
             db_purch.push({
+                id: Date.now(),
                 date: new Date().toLocaleDateString(),
                 name: db_inv[pIdx].name,
+                item: db_inv[pIdx].name,
                 productId: db_inv[pIdx].id,
                 qty,
                 totalCost,
                 unitCost,
                 prevCost,
                 timestamp: Date.now()
+            });
+            // Log to unified finance ledger
+            if (!db_financeLog) db_financeLog = [];
+            db_financeLog.push({
+                id: 'purch_' + Date.now(),
+                timestamp: Date.now(),
+                type: 'expense',
+                source: 'purchase',
+                category: db_inv[pIdx].name,
+                product: db_inv[pIdx].name,
+                description: `Purchase: ${qty}× ${db_inv[pIdx].name} @ ₦${unitCost.toLocaleString()}/unit`,
+                amount: totalCost,
+                by: user ? user.name : 'System'
             });
             document.getElementById('buy-qty').value  = '';
             document.getElementById('buy-cost').value = '';
@@ -3399,6 +3548,192 @@ function staffNormalizeProducts(items) {
             fillBusinessForm();
             calculateTotal();
         });
-    
+
+        // ===================== FINANCE LEDGER HELPERS =====================
+
+        // ===================== FINANCE LEDGER HELPERS =====================
+
+        function getFinanceLedgerEntries() {
+            if (!db_financeLog) db_financeLog = [];
+            const entries = [...db_financeLog];
+
+            // Also synthesize entries from db_purch (procurement expenses) if not already in log
+            db_purch.forEach(p => {
+                const id = 'purch_' + p.id;
+                if (!entries.find(e => e.id === id)) {
+                    entries.push({
+                        id,
+                        timestamp: p.timestamp || p.date ? new Date(p.date).getTime() : Date.now(),
+                        type: 'expense',
+                        source: 'purchase',
+                        category: p.item || 'Purchase',
+                        product: p.item || 'Purchase',
+                        description: `Purchase: ${p.qty}× ${p.item} @ ₦${(p.unitCost||0).toLocaleString()}/unit`,
+                        amount: p.qty * (p.unitCost || 0),
+                        by: p.by || 'System'
+                    });
+                }
+            });
+
+            return entries.sort((a, b) => b.timestamp - a.timestamp);
+        }
+
+        function filterFinanceLedger() {
+            let entries = getFinanceLedgerEntries();
+            const period  = (document.getElementById('fl-period')  || {}).value || 'all';
+            const typeF   = (document.getElementById('fl-type')    || {}).value || 'all';
+            const search  = ((document.getElementById('fl-search') || {}).value || '').trim().toLowerCase();
+            const now = Date.now(), msDay = 86400000;
+            if (period !== 'all') {
+                const limits = { daily: msDay, weekly: msDay*7, biweekly: msDay*14, monthly: msDay*30, yearly: msDay*365 };
+                const limit = limits[period] || 0;
+                entries = entries.filter(e => (now - e.timestamp) <= limit);
+            }
+            if (typeF !== 'all') entries = entries.filter(e => e.type === typeF);
+            if (search) entries = entries.filter(e =>
+                (e.description||'').toLowerCase().includes(search) ||
+                (e.category||'').toLowerCase().includes(search) ||
+                (e.product||'').toLowerCase().includes(search)
+            );
+            return entries;
+        }
+
+        function renderFinanceLedger() {
+            const entries  = filterFinanceLedger();
+            const groupBy  = (document.getElementById('fl-group') || {}).value || 'none';
+            const container = document.getElementById('finance-ledger-body');
+            if (!container) return;
+
+            // Metrics
+            const totalIn  = entries.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+            const totalOut = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
+            const net      = totalIn - totalOut;
+            const metricsEl = document.getElementById('finance-metrics');
+            if (metricsEl) metricsEl.innerHTML = `
+                <div class="metric-card" style="border-left-color:#27ae60;"><h4>Total Income</h4><h2 style="color:#27ae60;">₦${totalIn.toLocaleString()}</h2><small>${entries.filter(e=>e.type==='income').length} entries</small></div>
+                <div class="metric-card" style="border-left-color:#e74c3c;"><h4>Total Expenses</h4><h2 style="color:#e74c3c;">₦${totalOut.toLocaleString()}</h2><small>${entries.filter(e=>e.type==='expense').length} entries</small></div>
+                <div class="metric-card" style="border-left-color:${net>=0?'#00A09D':'#e74c3c'};"><h4>Net Balance</h4><h2 style="color:${net>=0?'#00A09D':'#e74c3c'};">${net>=0?'+':''}₦${Math.abs(net).toLocaleString()}</h2><small>${entries.length} total entries</small></div>
+                <div class="metric-card" style="border-left-color:var(--odoo-purple);"><h4>Account Balance</h4><h2 style="color:var(--odoo-purple);">₦${db_finance.toLocaleString()}</h2><small>Current cash on hand</small></div>
+            `;
+
+            if (!entries.length) {
+                container.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#7f8c8d;">No transactions found for this filter.</div>`;
+                return;
+            }
+
+            const rowHtml = (e, shade) => {
+                const dt = new Date(e.timestamp);
+                const dateStr = dt.toLocaleDateString('en-NG', { day:'2-digit', month:'short', year:'numeric' });
+                const timeStr = dt.toLocaleTimeString('en-NG', { hour:'2-digit', minute:'2-digit' });
+                const isIn = e.type === 'income';
+                const srcBadge = e.source === 'sale' ? `<span style="background:#d4edda;color:#155724;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">SALE</span>`
+                    : e.source === 'purchase' ? `<span style="background:#f8d7da;color:#721c24;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">PURCHASE</span>`
+                    : `<span style="background:#e2e8f0;color:#2d3748;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">MANUAL</span>`;
+                return `<tr style="background:${shade};">
+                    <td style="color:#7f8c8d;font-size:12px;white-space:nowrap;">${dateStr}<br><span style="font-size:11px;">${timeStr}</span></td>
+                    <td>${srcBadge}</td>
+                    <td>${escapeHtml(e.description||'')} ${e.by && e.by !== 'System' ? `<br><span style="font-size:11px;color:#aaa;">by ${escapeHtml(e.by)}</span>` : ''}</td>
+                    <td><span style="background:#f0f2f5;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(e.product||e.category||'-')}</span></td>
+                    <td style="text-align:right;font-weight:700;color:${isIn?'#27ae60':'#e74c3c'};white-space:nowrap;">${isIn?'+':'-'}₦${e.amount.toLocaleString()}</td>
+                </tr>`;
+            };
+
+            const tableWrap = (rows, totIn, totOut, label='') => {
+                const tNet = totIn - totOut;
+                return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
+                    ${label ? `<div style="padding:12px 16px;background:#f8f9fa;border-bottom:1px solid #eaebec;font-weight:700;font-size:14px;color:var(--odoo-purple);">${label}</div>` : ''}
+                    <div class="table-responsive" style="margin:0;">
+                    <table>
+                    <thead><tr>
+                        <th style="width:90px;">Date</th><th style="width:80px;">Source</th>
+                        <th>Description</th><th style="width:130px;">Category</th>
+                        <th style="text-align:right;width:120px;">Amount</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                    <tfoot>
+                    <tr style="background:#f0f4fa;">
+                        <td colspan="3" style="font-weight:700;font-size:13px;padding:10px 13px;color:#2c3e50;">
+                            ${label ? escapeHtml(label) + ' — ' : ''}
+                            <span style="color:#27ae60;">In: ₦${totIn.toLocaleString()}</span>
+                            &nbsp;·&nbsp;
+                            <span style="color:#e74c3c;">Out: ₦${totOut.toLocaleString()}</span>
+                        </td>
+                        <td style="text-align:right;font-weight:800;color:${tNet>=0?'#27ae60':'#e74c3c'};padding:10px 13px;" colspan="2">
+                            Net: ${tNet>=0?'+':''}₦${Math.abs(tNet).toLocaleString()}
+                        </td>
+                    </tr>
+                    </tfoot>
+                    </table></div></div>`;
+            };
+
+            if (groupBy === 'none') {
+                const rows = entries.map((e,i) => rowHtml(e, i%2===0?'#fff':'#fafafa')).join('');
+                const totIn = entries.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+                const totOut = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
+                container.innerHTML = tableWrap(rows, totIn, totOut, 'All Transactions');
+            } else if (groupBy === 'product') {
+                const groups = {};
+                entries.forEach(e => {
+                    const k = e.product || e.category || 'Uncategorised';
+                    if (!groups[k]) groups[k] = [];
+                    groups[k].push(e);
+                });
+                container.innerHTML = Object.keys(groups).sort().map(k => {
+                    const grp = groups[k];
+                    const rows = grp.map((e,i) => rowHtml(e, i%2===0?'#fff':'#fafafa')).join('');
+                    const totIn = grp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+                    const totOut = grp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
+                    return tableWrap(rows, totIn, totOut, k);
+                }).join('');
+            } else if (groupBy === 'month') {
+                const groups = {};
+                entries.forEach(e => {
+                    const k = new Date(e.timestamp).toLocaleDateString('en-NG', { month:'long', year:'numeric' });
+                    if (!groups[k]) groups[k] = [];
+                    groups[k].push(e);
+                });
+                container.innerHTML = Object.keys(groups).map(k => {
+                    const grp = groups[k];
+                    const rows = grp.map((e,i) => rowHtml(e, i%2===0?'#fff':'#fafafa')).join('');
+                    const totIn = grp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
+                    const totOut = grp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
+                    return tableWrap(rows, totIn, totOut, k);
+                }).join('');
+            } else if (groupBy === 'type') {
+                ['income','expense'].forEach(t => {
+                    const grp = entries.filter(e=>e.type===t);
+                    if (!grp.length) return;
+                    const rows = grp.map((e,i)=>rowHtml(e,i%2===0?'#fff':'#fafafa')).join('');
+                    const totIn = t==='income' ? grp.reduce((s,e)=>s+e.amount,0) : 0;
+                    const totOut = t==='expense' ? grp.reduce((s,e)=>s+e.amount,0) : 0;
+                    container.innerHTML = (container.innerHTML||'') + tableWrap(rows, totIn, totOut, t==='income'?'💚 Income':'🔴 Expenses');
+                });
+            }
+        }
+
+        function exportFinanceLedgerExcel() {
+            if (typeof XLSX === 'undefined') return showToast('Excel library not loaded', 'error');
+            const entries = filterFinanceLedger();
+            const rows = [['Date','Time','Source','Type','Category','Description','Amount (₦)','By']];
+            entries.forEach(e => {
+                const dt = new Date(e.timestamp);
+                rows.push([
+                    dt.toLocaleDateString('en-NG'),
+                    dt.toLocaleTimeString('en-NG',{hour:'2-digit',minute:'2-digit'}),
+                    e.source||'manual',
+                    e.type,
+                    e.product||e.category||'',
+                    e.description||'',
+                    e.amount,
+                    e.by||''
+                ]);
+            });
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Finance Ledger');
+            XLSX.writeFile(wb, `finance_ledger_${new Date().toISOString().slice(0,10)}.xlsx`);
+            showToast('Finance ledger exported!');
+        }
+
 </script></body>
 </html>
