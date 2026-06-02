@@ -994,6 +994,37 @@
   </div>
 </div>
 
+<!-- ===== EDIT FINANCE ENTRY MODAL ===== -->
+<div id="modal-edit-finance" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:8300; justify-content:center; align-items:center; padding:16px;">
+  <div class="card" style="width:min(440px,96vw); max-height:92vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+      <h3 style="color:var(--odoo-purple);">✏️ Edit Finance Entry</h3>
+      <button onclick="document.getElementById('modal-edit-finance').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:#7f8c8d;padding:4px;">✖</button>
+    </div>
+    <input type="hidden" id="edit-fe-id"/>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Transaction Type</label>
+    <select id="edit-fe-type" style="margin-bottom:12px;">
+      <option value="add">➕ Income / Money Received</option>
+      <option value="remove">➖ Expense / Money Paid Out</option>
+    </select>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Amount (₦) <span style="color:#e74c3c;">*</span></label>
+    <input id="edit-fe-amount" type="number" min="1" placeholder="e.g. 50000" style="margin-bottom:12px;"/>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Reason / Description <span style="color:#e74c3c;">*</span></label>
+    <input id="edit-fe-reason" type="text" placeholder="Describe this transaction…" style="margin-bottom:12px;"/>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Category / Product</label>
+    <input id="edit-fe-category" type="text" placeholder="e.g. Home / General, New Hoodie…" style="margin-bottom:18px;" list="edit-fe-cat-list"/>
+    <datalist id="edit-fe-cat-list">
+      <option value="Home / General"/><option value="New Hoodie"/><option value="Old Hoodie"/>
+      <option value="Ward Coat"/><option value="Paediatrics Growth Chart"/><option value="Birthlehem"/>
+      <option value="Tote Bag"/><option value="Book Sales"/><option value="Others"/>
+    </datalist>
+    <div style="display:flex;gap:10px;">
+      <button class="btn-odoo btn-teal" style="flex:1;" onclick="saveEditFinanceEntry()">💾 Save Changes</button>
+      <button onclick="document.getElementById('modal-edit-finance').style.display='none'" style="flex:1;background:none;border:1px solid #ddd;border-radius:6px;padding:11px;cursor:pointer;font-size:14px;font-weight:600;color:#555;">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== FINANCE LEDGER SCREEN ===== -->
 <div class="screen" id="finance">
   <div style="display:flex; justify-content:space-between; margin-bottom:16px; gap:10px; flex-wrap:wrap; align-items:flex-start;">
@@ -1011,10 +1042,10 @@
 
   <!-- Filters -->
   <div class="card" style="padding:14px 16px; margin-bottom:16px;">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
       <div>
         <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Time Period</label>
-        <select id="fl-period" onchange="renderFinanceLedger()" style="margin:0;width:160px;padding:8px 10px;font-size:13px;">
+        <select id="fl-period" onchange="renderFinanceLedger()" style="margin:0;width:150px;padding:8px 10px;font-size:13px;">
           <option value="all">All Time</option>
           <option value="daily">Today</option>
           <option value="weekly">This Week</option>
@@ -1025,24 +1056,30 @@
       </div>
       <div>
         <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Type</label>
-        <select id="fl-type" onchange="renderFinanceLedger()" style="margin:0;width:140px;padding:8px 10px;font-size:13px;">
-          <option value="all">All Transactions</option>
+        <select id="fl-type" onchange="renderFinanceLedger()" style="margin:0;width:130px;padding:8px 10px;font-size:13px;">
+          <option value="all">All</option>
           <option value="income">Income Only</option>
           <option value="expense">Expenses Only</option>
         </select>
       </div>
       <div>
+        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Product Filter</label>
+        <select id="fl-product" onchange="renderFinanceLedger()" style="margin:0;width:170px;padding:8px 10px;font-size:13px;">
+          <option value="all">All Products</option>
+        </select>
+      </div>
+      <div>
         <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Group By</label>
         <select id="fl-group" onchange="renderFinanceLedger()" style="margin:0;width:150px;padding:8px 10px;font-size:13px;">
-          <option value="none">None (Chronological)</option>
+          <option value="none">Chronological</option>
           <option value="product">Product / Category</option>
           <option value="month">Month</option>
           <option value="type">Income vs Expense</option>
         </select>
       </div>
-      <div style="flex:1;min-width:160px;">
+      <div style="flex:1;min-width:150px;">
         <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Search</label>
-        <input id="fl-search" type="text" placeholder="Search description…" oninput="renderFinanceLedger()" style="margin:0;padding:8px 10px;font-size:13px;"/>
+        <input id="fl-search" type="text" placeholder="Search description…" oninput="renderFinanceLedger()" style="margin:0;padding:8px 10px;font-size:13px;width:100%;"/>
       </div>
     </div>
   </div>
@@ -3549,128 +3586,301 @@ function staffNormalizeProducts(items) {
             calculateTotal();
         });
 
-        // ===================== FINANCE LEDGER HELPERS =====================
+        // ===================== FINANCE LEDGER =====================
 
-        // ===================== FINANCE LEDGER HELPERS =====================
+        // ===================== FINANCE LEDGER =====================
 
+        // Return every unique product group name from db_inv
+        function getProductGroups() {
+            const names = new Set();
+            (db_inv || []).forEach(v => { if (v.name) names.add(v.name); });
+            return Array.from(names).sort();
+        }
+
+        // Given a variant id, return the product group name
+        function variantGroupName(variantId) {
+            const v = (db_inv || []).find(x => String(x.id) === String(variantId));
+            return v ? v.name : null;
+        }
+
+        // Build a fully unified, deduplicated list of all financial activity.
+        // Sales are broken down per product group (using db_sales items + db_inv).
         function getFinanceLedgerEntries() {
             if (!db_financeLog) db_financeLog = [];
-            const entries = [...db_financeLog];
+            const seenIds = new Set();
+            const entries = [];
 
-            // Also synthesize entries from db_purch (procurement expenses) if not already in log
-            db_purch.forEach(p => {
-                const id = 'purch_' + p.id;
-                if (!entries.find(e => e.id === id)) {
-                    entries.push({
-                        id,
-                        timestamp: p.timestamp || p.date ? new Date(p.date).getTime() : Date.now(),
-                        type: 'expense',
-                        source: 'purchase',
-                        category: p.item || 'Purchase',
-                        product: p.item || 'Purchase',
-                        description: `Purchase: ${p.qty}× ${p.item} @ ₦${(p.unitCost||0).toLocaleString()}/unit`,
-                        amount: p.qty * (p.unitCost || 0),
-                        by: p.by || 'System'
+            const add = (entry) => {
+                const key = String(entry.id);
+                if (seenIds.has(key)) return;
+                seenIds.add(key);
+                entries.push(entry);
+            };
+
+            // ── 1. POS Sales — expanded per product group ──────────────────────
+            // db_sales has {inv, timestamp, items:[{id,qty}], customer, cashier, paymentMethod, total}
+            // db_acc has the same invoices but only totals — use db_sales for detail
+            const accInvs = new Set((db_acc || []).map(a => a.inv));
+
+            (db_sales || []).forEach(sale => {
+                // Only show confirmed (posted) sales that are in db_acc
+                if (!accInvs.has(sale.inv)) return;
+
+                // Aggregate items into product groups for this sale
+                const groupTotals = {};
+                (sale.items || []).forEach(item => {
+                    const grpName = variantGroupName(item.id) || 'Other Products';
+                    const v = (db_inv || []).find(x => String(x.id) === String(item.id));
+                    const lineTotal = (+item.qty || 0) * (v ? +v.price || 0 : 0);
+                    if (!groupTotals[grpName]) groupTotals[grpName] = 0;
+                    groupTotals[grpName] += lineTotal;
+                });
+
+                // If items are empty or totals don't add up (legacy data), fall back to one lump entry
+                const hasGroups = Object.keys(groupTotals).length > 0;
+                if (hasGroups) {
+                    Object.entries(groupTotals).forEach(([grp, amt], gi) => {
+                        add({
+                            id:          `sale_${sale.inv}_${gi}`,
+                            timestamp:   sale.timestamp || Date.now(),
+                            type:        'income',
+                            source:      'sale',
+                            category:    grp,
+                            product:     grp,
+                            description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'} · ${grp}`,
+                            amount:      amt,
+                            by:          sale.cashier || 'System',
+                            refId:       sale.inv,
+                            editable:    false
+                        });
+                    });
+                } else {
+                    // Legacy / no item detail — one lump entry
+                    const accEntry = (db_acc || []).find(a => a.inv === sale.inv);
+                    add({
+                        id:          `sale_${sale.inv}`,
+                        timestamp:   sale.timestamp || Date.now(),
+                        type:        'income',
+                        source:      'sale',
+                        category:    'Product Sales',
+                        product:     'Product Sales',
+                        description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'}`,
+                        amount:      accEntry ? accEntry.total : sale.total || 0,
+                        by:          sale.cashier || 'System',
+                        refId:       sale.inv,
+                        editable:    false
                     });
                 }
             });
 
+            // Also catch any db_acc entries that have no matching db_sales record (very old data)
+            (db_acc || []).forEach(sale => {
+                const existsInSales = (db_sales || []).some(s => s.inv === sale.inv);
+                if (!existsInSales) {
+                    add({
+                        id:          `sale_${sale.inv}`,
+                        timestamp:   sale.timestamp || Date.now(),
+                        type:        'income',
+                        source:      'sale',
+                        category:    'Product Sales',
+                        product:     'Product Sales',
+                        description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'}`,
+                        amount:      sale.total || 0,
+                        by:          sale.cashier || 'System',
+                        refId:       sale.inv,
+                        editable:    false
+                    });
+                }
+            });
+
+            // ── 2. Procurement expenses ────────────────────────────────────────
+            (db_purch || []).forEach(p => {
+                const pid   = p.id || (`${p.timestamp}_${p.name}`);
+                const total = p.totalCost || ((+p.qty || 0) * (+p.unitCost || 0));
+                add({
+                    id:          `purch_${pid}`,
+                    timestamp:   p.timestamp || Date.now(),
+                    type:        'expense',
+                    source:      'purchase',
+                    category:    p.name || 'Purchase',
+                    product:     p.name || 'Purchase',
+                    description: `Purchase: ${p.qty}× ${p.name || 'Item'} @ ₦${(+p.unitCost||0).toLocaleString()}/unit`,
+                    amount:      total,
+                    by:          p.by || 'System',
+                    editable:    false
+                });
+            });
+
+            // ── 3. Manual entries (Update Balance, etc.) ───────────────────────
+            (db_financeLog || []).forEach(e => {
+                add({ ...e, editable: true });
+            });
+
             return entries.sort((a, b) => b.timestamp - a.timestamp);
+        }
+
+        // Populate the product filter dropdown with all known categories in the ledger
+        function populateProductFilter() {
+            const sel = document.getElementById('fl-product');
+            if (!sel) return;
+            const current = sel.value;
+            const allEntries = getFinanceLedgerEntries();
+            const prods = new Set();
+            allEntries.forEach(e => { if (e.product) prods.add(e.product); });
+            const sorted = Array.from(prods).sort();
+            sel.innerHTML = '<option value="all">All Products</option>' +
+                sorted.map(p => `<option value="${escapeHtml(p)}" ${current===p?'selected':''}>${escapeHtml(p)}</option>`).join('');
         }
 
         function filterFinanceLedger() {
             let entries = getFinanceLedgerEntries();
             const period  = (document.getElementById('fl-period')  || {}).value || 'all';
             const typeF   = (document.getElementById('fl-type')    || {}).value || 'all';
+            const prodF   = (document.getElementById('fl-product') || {}).value || 'all';
             const search  = ((document.getElementById('fl-search') || {}).value || '').trim().toLowerCase();
             const now = Date.now(), msDay = 86400000;
+
             if (period !== 'all') {
                 const limits = { daily: msDay, weekly: msDay*7, biweekly: msDay*14, monthly: msDay*30, yearly: msDay*365 };
-                const limit = limits[period] || 0;
-                entries = entries.filter(e => (now - e.timestamp) <= limit);
+                entries = entries.filter(e => (now - e.timestamp) <= (limits[period] || 0));
             }
-            if (typeF !== 'all') entries = entries.filter(e => e.type === typeF);
+            if (typeF !== 'all')  entries = entries.filter(e => e.type === typeF);
+            if (prodF !== 'all')  entries = entries.filter(e => (e.product || e.category || '') === prodF);
             if (search) entries = entries.filter(e =>
                 (e.description||'').toLowerCase().includes(search) ||
                 (e.category||'').toLowerCase().includes(search) ||
-                (e.product||'').toLowerCase().includes(search)
+                (e.product||'').toLowerCase().includes(search) ||
+                (e.by||'').toLowerCase().includes(search)
             );
             return entries;
         }
 
         function renderFinanceLedger() {
-            const entries  = filterFinanceLedger();
-            const groupBy  = (document.getElementById('fl-group') || {}).value || 'none';
+            // Keep product dropdown up to date
+            populateProductFilter();
+
+            const entries   = filterFinanceLedger();
+            const groupBy   = (document.getElementById('fl-group') || {}).value || 'none';
             const container = document.getElementById('finance-ledger-body');
             if (!container) return;
 
-            // Metrics
-            const totalIn  = entries.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
-            const totalOut = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
+            // ── Summary metrics ──────────────────────────────────────────────
+            const totalIn  = entries.filter(e => e.type==='income').reduce((s,e)=>s+e.amount, 0);
+            const totalOut = entries.filter(e => e.type==='expense').reduce((s,e)=>s+e.amount, 0);
             const net      = totalIn - totalOut;
             const metricsEl = document.getElementById('finance-metrics');
             if (metricsEl) metricsEl.innerHTML = `
-                <div class="metric-card" style="border-left-color:#27ae60;"><h4>Total Income</h4><h2 style="color:#27ae60;">₦${totalIn.toLocaleString()}</h2><small>${entries.filter(e=>e.type==='income').length} entries</small></div>
-                <div class="metric-card" style="border-left-color:#e74c3c;"><h4>Total Expenses</h4><h2 style="color:#e74c3c;">₦${totalOut.toLocaleString()}</h2><small>${entries.filter(e=>e.type==='expense').length} entries</small></div>
-                <div class="metric-card" style="border-left-color:${net>=0?'#00A09D':'#e74c3c'};"><h4>Net Balance</h4><h2 style="color:${net>=0?'#00A09D':'#e74c3c'};">${net>=0?'+':''}₦${Math.abs(net).toLocaleString()}</h2><small>${entries.length} total entries</small></div>
-                <div class="metric-card" style="border-left-color:var(--odoo-purple);"><h4>Account Balance</h4><h2 style="color:var(--odoo-purple);">₦${db_finance.toLocaleString()}</h2><small>Current cash on hand</small></div>
-            `;
+                <div class="metric-card" style="border-left-color:#27ae60;">
+                    <h4>Total Income</h4>
+                    <h2 style="color:#27ae60;">₦${totalIn.toLocaleString()}</h2>
+                    <small>${entries.filter(e=>e.type==='income').length} entries</small>
+                </div>
+                <div class="metric-card" style="border-left-color:#e74c3c;">
+                    <h4>Total Expenses</h4>
+                    <h2 style="color:#e74c3c;">₦${totalOut.toLocaleString()}</h2>
+                    <small>${entries.filter(e=>e.type==='expense').length} entries</small>
+                </div>
+                <div class="metric-card" style="border-left-color:${net>=0?'#00A09D':'#e74c3c'};">
+                    <h4>Net Movement</h4>
+                    <h2 style="color:${net>=0?'#00A09D':'#e74c3c'};">${net>=0?'+':''}₦${Math.abs(net).toLocaleString()}</h2>
+                    <small>${entries.length} total entries</small>
+                </div>
+                <div class="metric-card" style="border-left-color:var(--odoo-purple);">
+                    <h4>Account Balance</h4>
+                    <h2 style="color:var(--odoo-purple);">₦${db_finance.toLocaleString()}</h2>
+                    <small>Current cash on hand</small>
+                </div>`;
 
             if (!entries.length) {
-                container.innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#7f8c8d;">No transactions found for this filter.</div>`;
+                container.innerHTML = `<div class="card" style="text-align:center;padding:48px;color:#7f8c8d;font-size:15px;">No transactions found for this filter.</div>`;
                 return;
             }
 
+            // ── Row renderer ─────────────────────────────────────────────────
             const rowHtml = (e, shade) => {
-                const dt = new Date(e.timestamp);
+                const dt      = new Date(e.timestamp);
                 const dateStr = dt.toLocaleDateString('en-NG', { day:'2-digit', month:'short', year:'numeric' });
                 const timeStr = dt.toLocaleTimeString('en-NG', { hour:'2-digit', minute:'2-digit' });
-                const isIn = e.type === 'income';
-                const srcBadge = e.source === 'sale' ? `<span style="background:#d4edda;color:#155724;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">SALE</span>`
-                    : e.source === 'purchase' ? `<span style="background:#f8d7da;color:#721c24;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">PURCHASE</span>`
-                    : `<span style="background:#e2e8f0;color:#2d3748;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">MANUAL</span>`;
+                const isIn    = e.type === 'income';
+
+                const srcBadge = e.source === 'sale'
+                    ? `<span style="background:#d4edda;color:#155724;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">SALE</span>`
+                    : e.source === 'purchase'
+                    ? `<span style="background:#f8d7da;color:#721c24;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">PURCHASE</span>`
+                    : `<span style="background:#e2e3ff;color:#3730a3;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">MANUAL</span>`;
+
+                const actions = e.editable
+                    ? `<button onclick="openEditFinanceEntry('${String(e.id).replace(/'/g,"\\'")}')" title="Edit"
+                           style="border:none;background:none;cursor:pointer;font-size:15px;padding:2px 4px;">✏️</button>
+                       <button onclick="deleteFinanceEntry('${String(e.id).replace(/'/g,"\\'")}')" title="Delete"
+                           style="border:none;background:none;cursor:pointer;font-size:15px;padding:2px 4px;">🗑️</button>`
+                    : `<span style="color:#ccc;font-size:11px;">—</span>`;
+
                 return `<tr style="background:${shade};">
-                    <td style="color:#7f8c8d;font-size:12px;white-space:nowrap;">${dateStr}<br><span style="font-size:11px;">${timeStr}</span></td>
+                    <td style="color:#7f8c8d;font-size:12px;white-space:nowrap;">
+                        ${dateStr}<br><span style="font-size:11px;">${timeStr}</span>
+                    </td>
                     <td>${srcBadge}</td>
-                    <td>${escapeHtml(e.description||'')} ${e.by && e.by !== 'System' ? `<br><span style="font-size:11px;color:#aaa;">by ${escapeHtml(e.by)}</span>` : ''}</td>
-                    <td><span style="background:#f0f2f5;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${escapeHtml(e.product||e.category||'-')}</span></td>
-                    <td style="text-align:right;font-weight:700;color:${isIn?'#27ae60':'#e74c3c'};white-space:nowrap;">${isIn?'+':'-'}₦${e.amount.toLocaleString()}</td>
+                    <td style="max-width:260px;">
+                        <span style="font-size:13px;">${escapeHtml(e.description || '')}</span>
+                        ${e.by && e.by !== 'System' ? `<br><span style="font-size:11px;color:#aaa;">by ${escapeHtml(e.by)}</span>` : ''}
+                        ${e.editedAt ? `<br><span style="font-size:10px;color:#bbb;">edited</span>` : ''}
+                    </td>
+                    <td>
+                        <span style="background:#f0f2f5;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap;">
+                            ${escapeHtml(e.product || e.category || '—')}
+                        </span>
+                    </td>
+                    <td style="text-align:right;font-weight:700;color:${isIn?'#27ae60':'#e74c3c'};white-space:nowrap;">
+                        ${isIn?'+':'−'}₦${e.amount.toLocaleString()}
+                    </td>
+                    <td style="text-align:center;white-space:nowrap;">${actions}</td>
                 </tr>`;
             };
 
-            const tableWrap = (rows, totIn, totOut, label='') => {
-                const tNet = totIn - totOut;
-                return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:16px;">
-                    ${label ? `<div style="padding:12px 16px;background:#f8f9fa;border-bottom:1px solid #eaebec;font-weight:700;font-size:14px;color:var(--odoo-purple);">${label}</div>` : ''}
+            // ── Table wrapper with header + footer totals ─────────────────────
+            const tableWrap = (rows, tIn, tOut, label) => {
+                const tNet = tIn - tOut;
+                const hdr  = label
+                    ? `<div style="padding:11px 16px;background:#f5f6fa;border-bottom:2px solid var(--odoo-purple);font-weight:700;font-size:14px;color:var(--odoo-purple);">${escapeHtml(label)}</div>`
+                    : '';
+                return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:18px;">
+                    ${hdr}
                     <div class="table-responsive" style="margin:0;">
                     <table>
                     <thead><tr>
-                        <th style="width:90px;">Date</th><th style="width:80px;">Source</th>
-                        <th>Description</th><th style="width:130px;">Category</th>
+                        <th style="width:90px;">Date</th>
+                        <th style="width:84px;">Source</th>
+                        <th>Description</th>
+                        <th style="width:140px;">Product / Category</th>
                         <th style="text-align:right;width:120px;">Amount</th>
+                        <th style="width:64px;text-align:center;">Edit</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
-                    <tfoot>
-                    <tr style="background:#f0f4fa;">
-                        <td colspan="3" style="font-weight:700;font-size:13px;padding:10px 13px;color:#2c3e50;">
-                            ${label ? escapeHtml(label) + ' — ' : ''}
-                            <span style="color:#27ae60;">In: ₦${totIn.toLocaleString()}</span>
-                            &nbsp;·&nbsp;
-                            <span style="color:#e74c3c;">Out: ₦${totOut.toLocaleString()}</span>
+                    <tfoot><tr style="background:#eef2fa;">
+                        <td colspan="3" style="font-weight:700;font-size:13px;padding:10px 14px;color:#2c3e50;">
+                            <span style="color:#27ae60;">In: ₦${tIn.toLocaleString()}</span>
+                            &nbsp;&middot;&nbsp;
+                            <span style="color:#e74c3c;">Out: ₦${tOut.toLocaleString()}</span>
                         </td>
-                        <td style="text-align:right;font-weight:800;color:${tNet>=0?'#27ae60':'#e74c3c'};padding:10px 13px;" colspan="2">
+                        <td colspan="3" style="text-align:right;font-weight:800;padding:10px 14px;color:${tNet>=0?'#27ae60':'#e74c3c'};">
                             Net: ${tNet>=0?'+':''}₦${Math.abs(tNet).toLocaleString()}
                         </td>
-                    </tr>
-                    </tfoot>
+                    </tr></tfoot>
                     </table></div></div>`;
             };
 
+            const buildTable = (grp, label) => {
+                const rows = grp.map((e,i) => rowHtml(e, i%2===0 ? '#fff' : '#fafafa')).join('');
+                const tIn  = grp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount, 0);
+                const tOut = grp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount, 0);
+                return tableWrap(rows, tIn, tOut, label);
+            };
+
+            // ── Apply grouping ────────────────────────────────────────────────
             if (groupBy === 'none') {
-                const rows = entries.map((e,i) => rowHtml(e, i%2===0?'#fff':'#fafafa')).join('');
-                const totIn = entries.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
-                const totOut = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
-                container.innerHTML = tableWrap(rows, totIn, totOut, 'All Transactions');
+                container.innerHTML = buildTable(entries, '');
+
             } else if (groupBy === 'product') {
                 const groups = {};
                 entries.forEach(e => {
@@ -3678,13 +3888,8 @@ function staffNormalizeProducts(items) {
                     if (!groups[k]) groups[k] = [];
                     groups[k].push(e);
                 });
-                container.innerHTML = Object.keys(groups).sort().map(k => {
-                    const grp = groups[k];
-                    const rows = grp.map((e,i) => rowHtml(e, i%2===0?'#fff':'#fafafa')).join('');
-                    const totIn = grp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
-                    const totOut = grp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
-                    return tableWrap(rows, totIn, totOut, k);
-                }).join('');
+                container.innerHTML = Object.keys(groups).sort().map(k => buildTable(groups[k], k)).join('');
+
             } else if (groupBy === 'month') {
                 const groups = {};
                 entries.forEach(e => {
@@ -3692,40 +3897,95 @@ function staffNormalizeProducts(items) {
                     if (!groups[k]) groups[k] = [];
                     groups[k].push(e);
                 });
-                container.innerHTML = Object.keys(groups).map(k => {
-                    const grp = groups[k];
-                    const rows = grp.map((e,i) => rowHtml(e, i%2===0?'#fff':'#fafafa')).join('');
-                    const totIn = grp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
-                    const totOut = grp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
-                    return tableWrap(rows, totIn, totOut, k);
-                }).join('');
+                container.innerHTML = Object.keys(groups).map(k => buildTable(groups[k], k)).join('');
+
             } else if (groupBy === 'type') {
+                let html = '';
                 ['income','expense'].forEach(t => {
-                    const grp = entries.filter(e=>e.type===t);
+                    const grp = entries.filter(e => e.type === t);
                     if (!grp.length) return;
-                    const rows = grp.map((e,i)=>rowHtml(e,i%2===0?'#fff':'#fafafa')).join('');
-                    const totIn = t==='income' ? grp.reduce((s,e)=>s+e.amount,0) : 0;
-                    const totOut = t==='expense' ? grp.reduce((s,e)=>s+e.amount,0) : 0;
-                    container.innerHTML = (container.innerHTML||'') + tableWrap(rows, totIn, totOut, t==='income'?'💚 Income':'🔴 Expenses');
+                    html += buildTable(grp, t === 'income' ? '💚 Income' : '🔴 Expenses');
                 });
+                container.innerHTML = html;
             }
+        }
+
+        // ── Open edit modal for a manual finance entry ─────────────────────────
+        function openEditFinanceEntry(id) {
+            const entry = (db_financeLog || []).find(e => String(e.id) === String(id));
+            if (!entry) return showToast('Entry not found.', 'error');
+            document.getElementById('edit-fe-id').value       = String(id);
+            document.getElementById('edit-fe-type').value     = entry.type === 'income' ? 'add' : 'remove';
+            document.getElementById('edit-fe-amount').value   = entry.amount;
+            document.getElementById('edit-fe-reason').value   = entry.description || '';
+            document.getElementById('edit-fe-category').value = entry.product || entry.category || '';
+            document.getElementById('modal-edit-finance').style.display = 'flex';
+        }
+
+        async function saveEditFinanceEntry() {
+            const id       = document.getElementById('edit-fe-id').value;
+            const type     = document.getElementById('edit-fe-type').value;
+            const rawAmt   = parseFloat(document.getElementById('edit-fe-amount').value);
+            const reason   = document.getElementById('edit-fe-reason').value.trim();
+            const category = document.getElementById('edit-fe-category').value.trim() || 'General';
+
+            if (!rawAmt || rawAmt <= 0) return showToast('Enter a valid amount.', 'error');
+            if (!reason)                return showToast('Reason / description is required.', 'error');
+
+            const idx = (db_financeLog || []).findIndex(e => String(e.id) === String(id));
+            if (idx === -1) return showToast('Entry not found.', 'error');
+
+            const old      = db_financeLog[idx];
+            const oldDelta = old.type === 'income' ? old.amount : -old.amount;
+            const newDelta = type === 'add'        ? rawAmt     : -rawAmt;
+            db_finance     = db_finance - oldDelta + newDelta;
+
+            db_financeLog[idx] = {
+                ...old,
+                type:        type === 'add' ? 'income' : 'expense',
+                amount:      rawAmt,
+                description: reason,
+                category,
+                product:     category,
+                editedAt:    Date.now(),
+                editedBy:    user ? user.name : 'Admin'
+            };
+
+            document.getElementById('modal-edit-finance').style.display = 'none';
+            await persist();
+            renderFinanceLedger();
+            showToast('Entry updated and balance adjusted.');
+        }
+
+        async function deleteFinanceEntry(id) {
+            showConfirm('Delete this finance entry? The account balance will be adjusted automatically.', async () => {
+                const idx = (db_financeLog || []).findIndex(e => String(e.id) === String(id));
+                if (idx === -1) return showToast('Entry not found.', 'error');
+                const old   = db_financeLog[idx];
+                const delta = old.type === 'income' ? old.amount : -old.amount;
+                db_finance -= delta;
+                db_financeLog.splice(idx, 1);
+                await persist();
+                renderFinanceLedger();
+                showToast('Entry deleted and balance adjusted.');
+            });
         }
 
         function exportFinanceLedgerExcel() {
             if (typeof XLSX === 'undefined') return showToast('Excel library not loaded', 'error');
             const entries = filterFinanceLedger();
-            const rows = [['Date','Time','Source','Type','Category','Description','Amount (₦)','By']];
+            const rows = [['Date','Time','Source','Type','Product / Category','Description','Amount (₦)','By']];
             entries.forEach(e => {
                 const dt = new Date(e.timestamp);
                 rows.push([
                     dt.toLocaleDateString('en-NG'),
-                    dt.toLocaleTimeString('en-NG',{hour:'2-digit',minute:'2-digit'}),
-                    e.source||'manual',
+                    dt.toLocaleTimeString('en-NG', { hour:'2-digit', minute:'2-digit' }),
+                    e.source || 'manual',
                     e.type,
-                    e.product||e.category||'',
-                    e.description||'',
+                    e.product || e.category || '',
+                    e.description || '',
                     e.amount,
-                    e.by||''
+                    e.by || ''
                 ]);
             });
             const ws = XLSX.utils.aoa_to_sheet(rows);
