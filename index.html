@@ -473,9 +473,6 @@
 <div class="bottom-nav-item" id="bn-acc" onclick="switchApp('accounting')" style="display:none;">
 <span class="nav-icon">📊</span><span>Reports</span>
 </div>
-<div class="bottom-nav-item" id="bn-finance" onclick="switchApp('finance')" style="display:none;">
-<span class="nav-icon">💳</span><span>Finance</span>
-</div>
 <div class="bottom-nav-item" id="bn-staff" onclick="switchApp('staff')">
 <span class="nav-icon">👥</span><span>Staff</span>
 </div>
@@ -529,7 +526,16 @@
 <div id="login-screen">
 <div id="login-box" style="background:white; padding:40px; border-radius:12px; width:380px; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.25);">
 <h2 style="color:var(--odoo-purple); margin-bottom: 5px;">CMDA-NAUTH Business Unit</h2>
-<p style="color:#7f8c8d; margin-bottom: 25px; font-size: 14px;">Sign in to your workspace</p>
+<p style="color:#7f8c8d; margin-bottom: 10px; font-size: 14px;">Sign in to your workspace</p>
+
+<!-- Current store indicator -->
+<div id="login-store-badge" style="display:inline-flex; align-items:center; gap:8px; background:#f0faf9; border:1px solid #b2dfdb; border-radius:20px; padding:6px 14px; margin-bottom:20px; font-size:12px; color:#555;">
+  <span>&#127978;</span>
+  <span>Store: <strong id="login-store-code-display" style="font-family:monospace; color:var(--odoo-teal); letter-spacing:2px;">------</strong></span>
+  <span style="color:#ddd;">|</span>
+  <a href="#" onclick="switchStore(); return false;" style="color:#e74c3c; font-weight:700; text-decoration:none; font-size:12px;" title="Leave this store and connect to a different one">&#x1F504; Switch Store</a>
+</div>
+
 <div id="login-form-area">
 <input id="login-pin" onkeypress="if(event.key==='Enter') handleLogin()" placeholder="Enter PIN" style="text-align:center; font-size:20px; letter-spacing: 5px;" type="password"/>
 <button class="btn-odoo" onclick="handleLogin()" style="width:100%;">Login</button>
@@ -549,7 +555,6 @@
 <div class="app-icon" id="icon-inv" onclick="switchApp('inventory')" title="Inventory">📦</div>
 <div class="app-icon" id="icon-proc" onclick="switchApp('procurement')" title="Purchases">💰</div>
 <div class="app-icon" id="icon-acc" onclick="switchApp('accounting')" title="Reports">📊</div>
-<div class="app-icon" id="icon-finance" onclick="switchApp('finance')" title="Finance Ledger">💳</div>
 <div class="app-icon" id="icon-staff" onclick="switchApp('staff')" title="Staff">👥</div>
 <div class="app-icon" id="icon-biz" onclick="switchApp('business')" title="Settings">🏢</div>
 <div style="margin-top:auto; width: 100%; display:flex; flex-direction: column; align-items: center;">
@@ -964,131 +969,9 @@
 </div>
 </div>
 
-<!-- ===== UPDATE BALANCE MODAL ===== -->
-<div id="modal-update-balance" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:8200; justify-content:center; align-items:center; padding:16px;">
-  <div class="card" style="width:min(440px,96vw); max-height:92vh; overflow-y:auto;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
-      <h3 style="color:var(--odoo-purple);">💳 Update Account Balance</h3>
-      <button onclick="document.getElementById('modal-update-balance').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:#7f8c8d;padding:4px;">✖</button>
-    </div>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Transaction Type</label>
-    <select id="ub-type" style="margin-bottom:12px;">
-      <option value="add">➕ Add Money (Income / Received)</option>
-      <option value="remove">➖ Remove Money (Expense / Payment)</option>
-    </select>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Amount (₦) <span style="color:#e74c3c;">*</span></label>
-    <input id="ub-amount" type="number" min="1" placeholder="e.g. 50000" style="margin-bottom:12px;"/>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Reason / Description <span style="color:#e74c3c;">*</span></label>
-    <input id="ub-reason" type="text" placeholder="e.g. Transport subsidy, Event logistics, Loan repayment…" style="margin-bottom:12px;"/>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Category / Product</label>
-    <input id="ub-category" type="text" placeholder="e.g. Home / General, New Hoodie, Birthlehem…" style="margin-bottom:18px;" list="ub-cat-list"/>
-    <datalist id="ub-cat-list">
-      <option value="Home / General"/><option value="New Hoodie"/><option value="Old Hoodie"/>
-      <option value="Ward Coat"/><option value="Paediatrics Growth Chart"/><option value="Birthlehem"/>
-      <option value="Tote Bag"/><option value="Book Sales"/><option value="Others"/>
-    </datalist>
-    <div style="display:flex;gap:10px;">
-      <button class="btn-odoo btn-teal" style="flex:1;" onclick="confirmUpdateBalance()">✅ Confirm Update</button>
-      <button onclick="document.getElementById('modal-update-balance').style.display='none'" style="flex:1;background:none;border:1px solid #ddd;border-radius:6px;padding:11px;cursor:pointer;font-size:14px;font-weight:600;color:#555;">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== EDIT FINANCE ENTRY MODAL ===== -->
-<div id="modal-edit-finance" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:8300; justify-content:center; align-items:center; padding:16px;">
-  <div class="card" style="width:min(440px,96vw); max-height:92vh; overflow-y:auto;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
-      <h3 style="color:var(--odoo-purple);">✏️ Edit Finance Entry</h3>
-      <button onclick="document.getElementById('modal-edit-finance').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:#7f8c8d;padding:4px;">✖</button>
-    </div>
-    <input type="hidden" id="edit-fe-id"/>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Transaction Type</label>
-    <select id="edit-fe-type" style="margin-bottom:12px;">
-      <option value="add">➕ Income / Money Received</option>
-      <option value="remove">➖ Expense / Money Paid Out</option>
-    </select>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Amount (₦) <span style="color:#e74c3c;">*</span></label>
-    <input id="edit-fe-amount" type="number" min="1" placeholder="e.g. 50000" style="margin-bottom:12px;"/>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Reason / Description <span style="color:#e74c3c;">*</span></label>
-    <input id="edit-fe-reason" type="text" placeholder="Describe this transaction…" style="margin-bottom:12px;"/>
-    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Category / Product</label>
-    <input id="edit-fe-category" type="text" placeholder="e.g. Home / General, New Hoodie…" style="margin-bottom:18px;" list="edit-fe-cat-list"/>
-    <datalist id="edit-fe-cat-list">
-      <option value="Home / General"/><option value="New Hoodie"/><option value="Old Hoodie"/>
-      <option value="Ward Coat"/><option value="Paediatrics Growth Chart"/><option value="Birthlehem"/>
-      <option value="Tote Bag"/><option value="Book Sales"/><option value="Others"/>
-    </datalist>
-    <div style="display:flex;gap:10px;">
-      <button class="btn-odoo btn-teal" style="flex:1;" onclick="saveEditFinanceEntry()">💾 Save Changes</button>
-      <button onclick="document.getElementById('modal-edit-finance').style.display='none'" style="flex:1;background:none;border:1px solid #ddd;border-radius:6px;padding:11px;cursor:pointer;font-size:14px;font-weight:600;color:#555;">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== FINANCE LEDGER SCREEN ===== -->
-<div class="screen" id="finance">
-  <div style="display:flex; justify-content:space-between; margin-bottom:16px; gap:10px; flex-wrap:wrap; align-items:flex-start;">
-    <div>
-      <h2>💳 Finance Ledger</h2>
-      <div class="mini">Unified record of all income and expenditure — product sales, purchases and manual entries.</div>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <button class="btn-odoo btn-teal" style="padding:8px 14px;font-size:13px;" onclick="exportFinanceLedgerExcel()">📥 Export Excel</button>
-    </div>
-  </div>
-
-  <!-- Summary cards -->
-  <div class="metric-grid" id="finance-metrics"></div>
-
-  <!-- Filters -->
-  <div class="card" style="padding:14px 16px; margin-bottom:16px;">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Time Period</label>
-        <select id="fl-period" onchange="renderFinanceLedger()" style="margin:0;width:150px;padding:8px 10px;font-size:13px;">
-          <option value="all">All Time</option>
-          <option value="daily">Today</option>
-          <option value="weekly">This Week</option>
-          <option value="biweekly">Last 2 Weeks</option>
-          <option value="monthly">This Month</option>
-          <option value="yearly">This Year</option>
-        </select>
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Type</label>
-        <select id="fl-type" onchange="renderFinanceLedger()" style="margin:0;width:130px;padding:8px 10px;font-size:13px;">
-          <option value="all">All</option>
-          <option value="income">Income Only</option>
-          <option value="expense">Expenses Only</option>
-        </select>
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Product Filter</label>
-        <select id="fl-product" onchange="renderFinanceLedger()" style="margin:0;width:170px;padding:8px 10px;font-size:13px;">
-          <option value="all">All Products</option>
-        </select>
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Group By</label>
-        <select id="fl-group" onchange="renderFinanceLedger()" style="margin:0;width:150px;padding:8px 10px;font-size:13px;">
-          <option value="none">Chronological</option>
-          <option value="product">Product / Category</option>
-          <option value="month">Month</option>
-          <option value="type">Income vs Expense</option>
-        </select>
-      </div>
-      <div style="flex:1;min-width:150px;">
-        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Search</label>
-        <input id="fl-search" type="text" placeholder="Search description…" oninput="renderFinanceLedger()" style="margin:0;padding:8px 10px;font-size:13px;width:100%;"/>
-      </div>
-    </div>
-  </div>
-
-  <!-- Ledger table -->
-  <div id="finance-ledger-body"></div>
-</div>
-
 <script>
+
+// placeholder - renderPOS and selectVariant are defined in the main script below
 
 function staffNormalizeProducts(items) {
             return (Array.isArray(items) ? items : []).map(p => {
@@ -1156,17 +1039,16 @@ function staffNormalizeProducts(items) {
                 return rest;
             });
             return {
-                biz:        db_biz,
-                staff:      staffClean,
-                inv:        db_inv,
-                sales:      db_sales,
-                acc:        db_acc,
-                purch:      db_purch,
-                chat:       db_chat,
-                finance:    db_finance,
-                pending:    db_pending,
-                financeLog: db_financeLog,
-                _ts:        Date.now()
+                biz:     db_biz,
+                staff:   staffClean,
+                inv:     db_inv,
+                sales:   db_sales,
+                acc:     db_acc,
+                purch:   db_purch,
+                chat:    db_chat,
+                finance: db_finance,
+                pending: db_pending,
+                _ts:     Date.now()
             };
         }
 
@@ -1190,16 +1072,14 @@ function staffNormalizeProducts(items) {
             if (data.acc     !== undefined) db_acc     = data.acc;
             if (data.purch   !== undefined) db_purch   = data.purch;
             if (data.chat    !== undefined) db_chat    = data.chat;
-            if (data.finance    !== undefined) db_finance    = data.finance;
-            if (data.pending    !== undefined) db_pending    = data.pending;
-            if (data.financeLog !== undefined) db_financeLog = data.financeLog;
+            if (data.finance !== undefined) db_finance = data.finance;
+            if (data.pending !== undefined) db_pending = data.pending;
         }
 
         function _stateHash(data) {
             return JSON.stringify({ biz: data.biz, staff: data.staff, inv: data.inv,
                                     sales: data.sales, acc: data.acc, purch: data.purch,
-                                    chat: data.chat, finance: data.finance, pending: data.pending,
-                                    financeLog: data.financeLog });
+                                    chat: data.chat, finance: data.finance, pending: data.pending });
         }
 
         // ── Firebase RTDB REST: create store ──────────────────────────────────
@@ -1458,6 +1338,7 @@ function staffNormalizeProducts(items) {
         async function initFirebaseSync() {
             _initBroadcastChannel();
 
+            _updateLoginStoreBadge();
             if (!_binId) {
                 // New device — show Connect screen
                 _showConnectScreen();
@@ -1559,10 +1440,7 @@ function staffNormalizeProducts(items) {
         // immediately seen as offline by every poller.  keepalive:true means
         // the browser sends this even while the page is being destroyed.
         function _markOfflineSync(staffId) {
-            if (!staffId) return;
-            // Always write lastSeen to localStorage — works even without network
-            localStorage.setItem('v72_lastseen_' + staffId, String(Date.now()));
-            if (!_binId) return;
+            if (!_binId || !staffId) return;
             fetch(`${RTDB}/stores/${_binId}/presence/${staffId}.json`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1581,18 +1459,12 @@ function staffNormalizeProducts(items) {
                 const now = Date.now();
                 db_staff.forEach(s => {
                     const p = presence[String(s.id)];
-                    if (p && p.ts && p.ts > 1) {
-                        const isOnline = p.ts > 1000 && (now - p.ts) < PRESENCE_STALE_MS;
-                        s.online = isOnline;
-                        // ts=1 means explicit offline — use current time as lastSeen
-                        s.lastSeen = p.ts > 1000 ? p.ts : (now - PRESENCE_STALE_MS - 1000);
-                        // Persist lastSeen separately so it survives db_staff reloads
-                        localStorage.setItem('v72_lastseen_' + s.id, String(s.lastSeen));
+                    if (p && p.ts && p.ts > 1000) {          // ts=1 = explicit offline
+                        s.online   = (now - p.ts) < PRESENCE_STALE_MS;
+                        s.lastSeen = p.ts;
                     } else {
                         s.online = false;
-                        // Restore lastSeen from localStorage if presence has no record yet
-                        const stored = localStorage.getItem('v72_lastseen_' + s.id);
-                        if (stored && !s.lastSeen) s.lastSeen = parseInt(stored, 10);
+                        if (p && p.ts && p.ts > 1) s.lastSeen = p.ts;
                     }
                 });
             } catch(e) {}
@@ -1658,7 +1530,6 @@ function staffNormalizeProducts(items) {
         let db_sales   = JSON.parse(localStorage.getItem('v72_sales'))   || [];
         let db_finance = parseFloat(localStorage.getItem('v72_finance')) || 0.0;
         let db_pending = JSON.parse(localStorage.getItem('v72_pending')) || [];
-        let db_financeLog = JSON.parse(localStorage.getItem('v72_financeLog')) || [];
 
         let user = null;
         let cart = [];
@@ -1691,6 +1562,36 @@ function staffNormalizeProducts(items) {
         // confirm-yes wired in DOMContentLoaded below
 
         // ===================== AUTH =====================
+        // ── Switch Store: wipe local store binding and go back to connect screen ──
+        function switchStore() {
+            const confirmed = confirm(
+                "Switch to a different store?\n\n" +
+                "This will disconnect this device from the current store.\n" +
+                "All locally cached data will be cleared.\n\n" +
+                "You will need to enter a new Store Code to reconnect."
+            );
+            if (!confirmed) return;
+            // Clear ALL local store data
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                keysToRemove.push(localStorage.key(i));
+            }
+            keysToRemove.forEach(k => localStorage.removeItem(k));
+            // Reload — no _binId means connect screen will show
+            location.reload();
+        }
+
+        // ── Populate store code badge on login screen ─────────────────────────
+        function _updateLoginStoreBadge() {
+            const el = document.getElementById('login-store-code-display');
+            if (!el) return;
+            if (_binId) {
+                el.textContent = _binIdToCode(_binId);
+            } else {
+                el.textContent = '------';
+            }
+        }
+
         function handleLogin() {
             const pin = document.getElementById('login-pin').value.trim();
             const found = db_staff.find(s => s.pin === pin);
@@ -1715,6 +1616,7 @@ function staffNormalizeProducts(items) {
         function showLogin() {
             document.getElementById('login-form-area').style.display = 'block';
             document.getElementById('recover-form-area').style.display = 'none';
+            _updateLoginStoreBadge();
         }
 
         function processRecovery() {
@@ -1941,16 +1843,14 @@ function staffNormalizeProducts(items) {
 
             // Set staff online status immediately on login
             setStaffOnlineStatus(user.id, true);
-            localStorage.setItem('v72_lastseen_' + user.id, String(Date.now()));
             _writeHeartbeat(user.id);
             _syncPresenceFromCloud().then(() => renderStaff());
 
 
             const isAdmin = user.role === 'admin';
-            ['icon-inv', 'icon-acc', 'icon-biz', 'icon-proc', 'icon-finance'].forEach(id => {
+            ['icon-inv', 'icon-acc', 'icon-biz', 'icon-proc'].forEach(id => {
                 const el = document.getElementById(id);
-                if (!el) return;
-                el.style.display = (id === 'icon-acc' || id === 'icon-biz' || id === 'icon-finance') ? (isAdmin ? 'flex' : 'none') : (canAccess(id === 'icon-inv' ? 'inventory' : 'procurement') ? 'flex' : 'none');
+                el.style.display = (id === 'icon-acc' || id === 'icon-biz') ? (isAdmin ? 'flex' : 'none') : (canAccess(id === 'icon-inv' ? 'inventory' : 'procurement') ? 'flex' : 'none');
             });
             // Everyone can see Receipts and Staff icons
             document.getElementById('icon-receipts').style.display = 'flex';
@@ -1965,7 +1865,6 @@ function staffNormalizeProducts(items) {
             setMobileNav('bn-inv', canInv);
             setMobileNav('bn-proc', canProc);
             setMobileNav('bn-acc', isAdmin);
-            setMobileNav('bn-finance', isAdmin);
             setMobileNav('bn-biz', isAdmin);
 
             fillBusinessForm();
@@ -2011,7 +1910,6 @@ function staffNormalizeProducts(items) {
             localStorage.setItem('v72_sales', JSON.stringify(db_sales));
             localStorage.setItem('v72_finance', db_finance.toString());
             localStorage.setItem('v72_pending', JSON.stringify(db_pending));
-            localStorage.setItem('v72_financeLog', JSON.stringify(db_financeLog));
             document.getElementById('account-balance-nav').innerText = `${db_finance.toLocaleString()}`;
         }
 
@@ -2022,41 +1920,11 @@ function staffNormalizeProducts(items) {
 
         // ===================== GLOBAL FUNCTIONS (Fixed) =====================
         function promptUpdateBalance() {
-            document.getElementById('modal-update-balance').style.display = 'flex';
-            document.getElementById('ub-amount').value = '';
-            document.getElementById('ub-reason').value = '';
-            document.getElementById('ub-type').value = 'add';
-            document.getElementById('ub-category').value = 'General';
-        }
-
-        async function confirmUpdateBalance() {
-            const type     = document.getElementById('ub-type').value;
-            const rawAmt   = parseFloat(document.getElementById('ub-amount').value);
-            const reason   = document.getElementById('ub-reason').value.trim();
-            const category = document.getElementById('ub-category').value.trim() || 'General';
-            if (!rawAmt || rawAmt <= 0)  return showToast('Enter a valid amount.', 'error');
-            if (!reason)                 return showToast('Please state a reason.', 'error');
-            const delta = type === 'add' ? rawAmt : -rawAmt;
-            db_finance += delta;
-
-            // Record in unified finance ledger
-            if (!db_financeLog) db_financeLog = [];
-            db_financeLog.push({
-                id: Date.now(),
-                timestamp: Date.now(),
-                type: type === 'add' ? 'income' : 'expense',
-                source: 'manual',
-                category,
-                description: reason,
-                product: category,
-                amount: rawAmt,
-                by: user ? user.name : 'Admin'
-            });
-
-            document.getElementById('modal-update-balance').style.display = 'none';
-            await persist();
-            renderFinanceLedger();
-            showToast(`Balance ${type === 'add' ? 'increased' : 'reduced'} by ₦${rawAmt.toLocaleString()} — ${reason}`);
+            const val = parseFloat(prompt("Enter amount to ADD (+) or REMOVE (-):"));
+            if(isNaN(val)) return alert("Invalid amount");
+            db_finance += val;
+            persist();
+            showToast("Balance updated successfully");
         }
 
         document.addEventListener('keypress', function(e){
@@ -2093,19 +1961,18 @@ function staffNormalizeProducts(items) {
             document.getElementById(id).classList.add('active');
 
             // Desktop sidebar active state
-            const mapping = { 'pos': null, 'inventory': 'icon-inv', 'procurement': 'icon-proc', 'accounting': 'icon-acc', 'finance': 'icon-finance', 'staff': 'icon-staff', 'business': 'icon-biz', 'receipts': 'icon-receipts' };
+            const mapping = { 'pos': null, 'inventory': 'icon-inv', 'procurement': 'icon-proc', 'accounting': 'icon-acc', 'staff': 'icon-staff', 'business': 'icon-biz', 'receipts': 'icon-receipts' };
             if (mapping[id]) document.getElementById(mapping[id]).classList.add('active');
             else document.querySelector('.apps-sidebar .app-icon:first-child').classList.add('active');
 
             // Mobile bottom nav active state
             document.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
-            const bnMap = { 'pos': 'bn-pos', 'receipts': 'bn-receipts', 'inventory': 'bn-inv', 'procurement': 'bn-proc', 'accounting': 'bn-acc', 'staff': 'bn-staff', 'business': 'bn-biz', 'finance': 'bn-finance' };
+            const bnMap = { 'pos': 'bn-pos', 'receipts': 'bn-receipts', 'inventory': 'bn-inv', 'procurement': 'bn-proc', 'accounting': 'bn-acc', 'staff': 'bn-staff', 'business': 'bn-biz' };
             if (bnMap[id]) { const el = document.getElementById(bnMap[id]); if (el) el.classList.add('active'); }
 
             if (id === 'inventory') renderInventory();
             if (id === 'procurement') renderProcurement();
             if (id === 'accounting') renderAccounting();
-            if (id === 'finance') renderFinanceLedger();
             if (id === 'staff') renderStaff();
             if (id === 'pos') renderPOS();
             if (id === 'receipts') renderReceipts();
@@ -2114,43 +1981,16 @@ function staffNormalizeProducts(items) {
         // ===================== THERMAL RECEIPT PRINTING =====================
         function printThermalReceipt(inv) {
             const w = window.open('', '_blank', 'width=400,height=600');
-
+            
             let itemsHtml = inv.items.map(i => `
                 <tr>
                     <td style="padding: 3px 0;">${i.name}</td>
                     <td style="text-align: center;">${i.qty}</td>
-                    <td style="text-align: right;">&#8358;${(i.qty * i.price).toLocaleString()}</td>
+                    <td style="text-align: right;">₦${(i.qty * i.price).toLocaleString()}</td>
                 </tr>
             `).join('');
 
-            // ── Credit / Instalment block ─────────────────────────────────
-            let creditHtml = '';
-            if (inv.isCredit || inv.amountPaid !== undefined) {
-                const totalDebt   = inv.total || 0;
-                const amtPaid     = inv.amountPaid !== undefined ? inv.amountPaid : (inv.thisPayment || 0);
-                const balanceLeft = Math.max(0, totalDebt - amtPaid);
-                const thisPayment = inv.thisPayment || 0;
-                const instList    = (inv.instalments || []).map(i =>
-                    `<tr><td>${i.date}</td><td style="text-align:right;">&#8358;${i.amount.toLocaleString()}${i.note ? ' ('+i.note+')' : ''}</td></tr>`
-                ).join('');
-
-                creditHtml = `
-                <hr style="border-top:2px dashed #000; margin:8px 0;">
-                <div style="text-align:center; font-weight:bold; font-size:13px; margin-bottom:6px;">
-                    *** CREDIT / INSTALMENT RECORD ***
-                </div>
-                ${thisPayment > 0 ? `<div style="display:flex;justify-content:space-between;"><span>Payment This Receipt:</span><span style="font-weight:bold;">&#8358;${thisPayment.toLocaleString()}</span></div>` : ''}
-                <div style="display:flex;justify-content:space-between;margin-top:4px;"><span>Total Invoice:</span><span>&#8358;${totalDebt.toLocaleString()}</span></div>
-                <div style="display:flex;justify-content:space-between;"><span>Total Paid So Far:</span><span style="color:#000; font-weight:bold;">&#8358;${amtPaid.toLocaleString()}</span></div>
-                <div style="display:flex;justify-content:space-between; font-size:14px; font-weight:900; border-top:1px solid #000; padding-top:4px; margin-top:4px;">
-                    <span>BALANCE STILL OWED:</span>
-                    <span>${balanceLeft > 0 ? '&#8358;'+balanceLeft.toLocaleString() : 'FULLY PAID ✓'}</span>
-                </div>
-                ${inv.dueDate ? `<div style="text-align:center; margin-top:4px; font-size:11px;">Expected full payment by: <b>${inv.dueDate}</b></div>` : ''}
-                ${instList ? `<table style="margin-top:8px; font-size:11px;"><thead><tr><th style="text-align:left;">Payment Date</th><th style="text-align:right;">Amount</th></tr></thead><tbody>${instList}</tbody></table>` : ''}
-                <hr style="border-top:2px dashed #000; margin:8px 0;">`;
-            }
-
+            // BUG FIX 4: Ensured window.print() only fires after the document is completely ready
             const html = `
             <!DOCTYPE html>
             <html>
@@ -2183,13 +2023,12 @@ function staffNormalizeProducts(items) {
                     <tbody>${itemsHtml}</tbody>
                 </table>
                 <div class="totals">
-                    <div><span>Subtotal:</span> <span>&#8358;${(inv.subtotal||inv.total).toLocaleString()}</span></div>
-                    ${(inv.discount||0) > 0 ? `<div><span>Discount${inv.discountLabel ? ' ('+inv.discountLabel+')' : ''}:</span> <span>-&#8358;${inv.discount.toLocaleString()}</span></div>` : ''}
-                    <div style="font-size: 15px; border-top: 2px solid #000; padding-top: 5px; margin-top: 5px;"><span>TOTAL:</span> <span>&#8358;${inv.total.toLocaleString()}</span></div>
+                    <div><span>Subtotal:</span> <span>₦${inv.subtotal.toLocaleString()}</span></div>
+                    <div><span>Discount${inv.discountLabel ? ' (' + inv.discountLabel + ')' : ''}:</span> <span>-₦${inv.discount.toLocaleString()}</span></div>
+                    <div style="font-size: 15px; border-top: 2px solid #000; padding-top: 5px; margin-top: 5px;"><span>TOTAL:</span> <span>₦${inv.total.toLocaleString()}</span></div>
                 </div>
-                ${creditHtml}
                 <hr style="border-top: 1px dashed #000; margin: 10px 0;">
-                <div class="text-center">${(inv.amountPaid||0) >= (inv.total||0) && inv.isCredit ? 'Thank you — account fully settled!' : 'Thank you for your business!'}</div>
+                <div class="text-center">Thank you for your business!</div>
                 <script>
                     window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); }
                 <\/script>
@@ -2561,12 +2400,6 @@ function staffNormalizeProducts(items) {
                     _discountType = 'flat'; setDiscountType('flat');
                     calculateTotal();
                     renderPOS(); renderStaff(); renderReceipts(); renderPendingPayments();
-                    // Attach credit info so the receipt shows debt/balance
-                    currentInvoice.isCredit   = true;
-                    currentInvoice.amountPaid = deposit;
-                    currentInvoice.thisPayment = deposit;
-                    currentInvoice.dueDate    = dueDate;
-                    currentInvoice.instalments = instalments;
                     printThermalReceipt(currentInvoice);
                     const msg = deposit > 0
                         ? `⏳ Credit recorded. Deposit ₦${deposit.toLocaleString()} noted. Balance: ₦${(finalTotal-deposit).toLocaleString()}`
@@ -2578,13 +2411,6 @@ function staffNormalizeProducts(items) {
                 db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
                 db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
                 db_finance += finalTotal;
-                // Log to unified finance ledger — one entry per product line
-                if (!db_financeLog) db_financeLog = [];
-                saleItems.forEach(c => {
-                    const p = db_inv.find(x => x.id == c.id);
-                    const lineTotal = (p ? p.price : 0) * c.qty;
-                    db_financeLog.push({ id: Date.now() + Math.random(), timestamp, type: 'income', source: 'sale', category: p ? p.name : 'Unknown', product: p ? p.name : 'Unknown', description: `Sale: ${c.qty}× ${p ? p.name : 'Item'} (${invNum})`, amount: lineTotal, by: cashier });
-                });
                 const sIdx = db_staff.findIndex(x => x.id == user.id);
                 if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
                 persist();
@@ -2650,15 +2476,13 @@ function staffNormalizeProducts(items) {
             const tbody = document.getElementById('pending-table');
             if (!tbody) return;
             const isAdmin = user && user.role === 'admin';
-            // Staff only see their own credit sales; admin sees all
-            const visible = isAdmin ? db_pending : db_pending.filter(p => p.cashier === user.name);
             const badge = document.getElementById('pending-count-badge');
-            if (badge) badge.textContent = visible.length ? `${visible.length} pending` : '';
-            if (!visible.length) {
-                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#7f8c8d; padding:20px;">${isAdmin ? 'No pending credit payments.' : 'You have no pending credit sales.'}</td></tr>`;
+            if (badge) badge.textContent = db_pending.length ? `${db_pending.length} pending` : '';
+            if (!db_pending.length) {
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:#7f8c8d; padding:20px;">No pending credit payments.</td></tr>`;
                 return;
             }
-            tbody.innerHTML = visible.slice().reverse().map(p => {
+            tbody.innerHTML = db_pending.slice().reverse().map(p => {
                 const paid    = p.amountPaid || 0;
                 const balance = Math.max(0, p.total - paid);
                 const pct     = Math.min(100, p.total > 0 ? (paid / p.total) * 100 : 0).toFixed(0);
@@ -2755,65 +2579,43 @@ function staffNormalizeProducts(items) {
             p.instalments.push({ date: new Date().toLocaleDateString(), amount, note, ts: Date.now() });
             p.amountPaid = (p.amountPaid || 0) + amount;
 
-            // ── Every instalment hits balance immediately; update navbar now ──
+            // ── Every instalment received hits the balance immediately ──
             db_finance += amount;
-            const navEl = document.getElementById('account-balance-nav');
-            if (navEl) navEl.innerText = db_finance.toLocaleString();
+            persistLocalOnly(); // update navbar balance right away
 
             closeInstalmentModal();
 
-            // Helper: build items array for receipt
-            const _receiptItems = (p.items || []).map(it => {
-                const prod = db_inv.find(x => x.id == it.id);
-                return { id: it.id, name: prod ? prod.name : 'Item', qty: it.qty,
-                         price: prod ? prod.price : 0, cost: prod ? prod.cost : 0 };
-            });
-
             // Auto-complete if fully paid
             if (p.amountPaid >= p.total) {
-                // Post to analytics/sales only now — finance already has all the money
-                db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier,
-                    timestamp: p.timestamp, date: p.date,
-                    total: p.total, profit: p.profit, cost: p.cost,
+                // Post to accounts & sales for analytics (do NOT add to finance again)
+                db_acc.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
+                    date: p.date, total: p.total, profit: p.profit, cost: p.cost,
                     paymentMethod: 'Credit (Instalment — Completed)', instalments: p.instalments });
-                db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier,
-                    timestamp: p.timestamp, date: p.date,
-                    total: p.total, profit: p.profit, cost: p.cost,
-                    paymentMethod: 'Credit (Instalment — Completed)',
-                    items: p.items, instalments: p.instalments });
+                db_sales.push({ inv: p.inv, customer: p.customer, cashier: p.cashier, timestamp: p.timestamp,
+                    date: p.date, total: p.total, profit: p.profit, cost: p.cost,
+                    paymentMethod: 'Credit (Instalment — Completed)', items: p.items, instalments: p.instalments });
+                // finance already has all collected amounts — do NOT add p.total again
                 db_pending.splice(idx, 1);
                 await persist();
-                // Full-payment receipt — show settled status
-                printThermalReceipt({
-                    inv: p.inv, customer: p.customer, cashier: user ? user.name : p.cashier,
+                // Print a completion receipt
+                const fullSale = {
+                    inv: p.inv, customer: p.customer, cashier: p.cashier,
+                    timestamp: Date.now(),
                     date: new Date().toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' }),
                     paymentMethod: 'Credit (Fully Paid)',
-                    isCredit: true, thisPayment: amount,
-                    amountPaid: p.total,   // show as fully paid
-                    dueDate: p.dueDate, instalments: p.instalments,
-                    items: _receiptItems,
-                    subtotal: p.subtotal || p.total, discount: p.discount || 0,
-                    total: p.total, profit: p.profit
-                });
+                    items: (p.items||[]).map(it => {
+                        const prod = db_inv.find(x => x.id == it.id);
+                        return { id: it.id, name: prod ? prod.name : 'Item', qty: it.qty, price: prod ? prod.price : 0, cost: prod ? prod.cost : 0 };
+                    }),
+                    subtotal: p.subtotal || p.total, discount: p.discount || 0, total: p.total, profit: p.profit
+                };
                 renderPendingPayments(); renderReceipts(); renderAccounting();
+                printThermalReceipt(fullSale);
                 showToast(`🎉 ${invNo} fully paid! Receipt printing and accounts updated.`, 'success');
             } else {
-                // Partial — save then print instalment receipt
                 await persist();
                 renderPendingPayments();
-                printThermalReceipt({
-                    inv: p.inv, customer: p.customer, cashier: user ? user.name : p.cashier,
-                    date: new Date().toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' }),
-                    paymentMethod: 'Credit (Instalment Payment)',
-                    isCredit: true, thisPayment: amount,
-                    amountPaid: p.amountPaid,
-                    dueDate: p.dueDate, instalments: p.instalments,
-                    items: _receiptItems,
-                    subtotal: p.subtotal || p.total, discount: p.discount || 0,
-                    total: p.total, profit: p.profit
-                });
-                const remaining = p.total - p.amountPaid;
-                showToast(`✅ ₦${amount.toLocaleString()} recorded. Balance left: ₦${remaining.toLocaleString()}`, 'success');
+                showToast(`✅ ₦${amount.toLocaleString()} recorded. Balance: ₦${(p.total - p.amountPaid).toLocaleString()}`, 'success');
             }
         }
 
@@ -3075,29 +2877,14 @@ function staffNormalizeProducts(items) {
             // Display cost = weighted average across all layers
             db_inv[pIdx].cost = _weightedAvgCost(db_inv[pIdx].costLayers);
             db_purch.push({
-                id: Date.now(),
                 date: new Date().toLocaleDateString(),
                 name: db_inv[pIdx].name,
-                item: db_inv[pIdx].name,
                 productId: db_inv[pIdx].id,
                 qty,
                 totalCost,
                 unitCost,
                 prevCost,
                 timestamp: Date.now()
-            });
-            // Log to unified finance ledger
-            if (!db_financeLog) db_financeLog = [];
-            db_financeLog.push({
-                id: 'purch_' + Date.now(),
-                timestamp: Date.now(),
-                type: 'expense',
-                source: 'purchase',
-                category: db_inv[pIdx].name,
-                product: db_inv[pIdx].name,
-                description: `Purchase: ${qty}× ${db_inv[pIdx].name} @ ₦${unitCost.toLocaleString()}/unit`,
-                amount: totalCost,
-                by: user ? user.name : 'System'
             });
             document.getElementById('buy-qty').value  = '';
             document.getElementById('buy-cost').value = '';
@@ -3278,21 +3065,17 @@ function staffNormalizeProducts(items) {
                 const badge = s.status === 'active' ? 'badge-active' : (s.status === 'deleted' ? 'badge-deleted' : 'badge-suspended');
                 const access = s.role === 'admin' ? 'All ERP modules' : s.role === 'inventory' ? 'POS + Inventory + Purchases' : 'POS only';
                 
-                // Online/offline — restore lastSeen from localStorage if not on object
+                // Online/offline
                 const isOnline = !!s.online;
-                const storedTs  = parseInt(localStorage.getItem('v72_lastseen_' + s.id) || '0', 10);
-                const lastSeenTs = s.lastSeen || (storedTs > 0 ? storedTs : 0);
-                const relTime = lastSeenTs > 0 ? (() => {
-                    const mins = Math.floor((Date.now() - lastSeenTs) / 60000);
+                const relTime = s.lastSeen ? (() => {
+                    const mins = Math.floor((Date.now() - s.lastSeen) / 60000);
                     if (mins < 1) return 'just now';
                     if (mins < 60) return `${mins}m ago`;
                     const hrs = Math.floor(mins / 60);
                     if (hrs < 24) return `${hrs}h ago`;
-                    return new Date(lastSeenTs).toLocaleDateString();
+                    return new Date(s.lastSeen).toLocaleDateString();
                 })() : 'never';
-                const onlineHtml = `<span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>${isOnline
-                    ? '<span class="online-tag">Online</span>'
-                    : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">Last seen: ${relTime}</small>`}`;
+                const onlineHtml = `<span class="status-dot ${isOnline ? 'status-online' : 'status-offline'}"></span>${isOnline ? '<span class="online-tag">Online</span>' : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">Last seen: ${relTime}</small>`}`;
 
                 // Calculate Staff Performance
                 const staffSales = db_sales.filter(sale => sale.cashier === s.name);
@@ -3585,415 +3368,6 @@ function staffNormalizeProducts(items) {
             fillBusinessForm();
             calculateTotal();
         });
-
-        // ===================== FINANCE LEDGER =====================
-
-        // ===================== FINANCE LEDGER =====================
-
-        // Return every unique product group name from db_inv
-        function getProductGroups() {
-            const names = new Set();
-            (db_inv || []).forEach(v => { if (v.name) names.add(v.name); });
-            return Array.from(names).sort();
-        }
-
-        // Given a variant id, return the product group name
-        function variantGroupName(variantId) {
-            const v = (db_inv || []).find(x => String(x.id) === String(variantId));
-            return v ? v.name : null;
-        }
-
-        // Build a fully unified, deduplicated list of all financial activity.
-        // Sales are broken down per product group (using db_sales items + db_inv).
-        function getFinanceLedgerEntries() {
-            if (!db_financeLog) db_financeLog = [];
-            const seenIds = new Set();
-            const entries = [];
-
-            const add = (entry) => {
-                const key = String(entry.id);
-                if (seenIds.has(key)) return;
-                seenIds.add(key);
-                entries.push(entry);
-            };
-
-            // ── 1. POS Sales — expanded per product group ──────────────────────
-            // db_sales has {inv, timestamp, items:[{id,qty}], customer, cashier, paymentMethod, total}
-            // db_acc has the same invoices but only totals — use db_sales for detail
-            const accInvs = new Set((db_acc || []).map(a => a.inv));
-
-            (db_sales || []).forEach(sale => {
-                // Only show confirmed (posted) sales that are in db_acc
-                if (!accInvs.has(sale.inv)) return;
-
-                // Aggregate items into product groups for this sale
-                const groupTotals = {};
-                (sale.items || []).forEach(item => {
-                    const grpName = variantGroupName(item.id) || 'Other Products';
-                    const v = (db_inv || []).find(x => String(x.id) === String(item.id));
-                    const lineTotal = (+item.qty || 0) * (v ? +v.price || 0 : 0);
-                    if (!groupTotals[grpName]) groupTotals[grpName] = 0;
-                    groupTotals[grpName] += lineTotal;
-                });
-
-                // If items are empty or totals don't add up (legacy data), fall back to one lump entry
-                const hasGroups = Object.keys(groupTotals).length > 0;
-                if (hasGroups) {
-                    Object.entries(groupTotals).forEach(([grp, amt], gi) => {
-                        add({
-                            id:          `sale_${sale.inv}_${gi}`,
-                            timestamp:   sale.timestamp || Date.now(),
-                            type:        'income',
-                            source:      'sale',
-                            category:    grp,
-                            product:     grp,
-                            description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'} · ${grp}`,
-                            amount:      amt,
-                            by:          sale.cashier || 'System',
-                            refId:       sale.inv,
-                            editable:    false
-                        });
-                    });
-                } else {
-                    // Legacy / no item detail — one lump entry
-                    const accEntry = (db_acc || []).find(a => a.inv === sale.inv);
-                    add({
-                        id:          `sale_${sale.inv}`,
-                        timestamp:   sale.timestamp || Date.now(),
-                        type:        'income',
-                        source:      'sale',
-                        category:    'Product Sales',
-                        product:     'Product Sales',
-                        description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'}`,
-                        amount:      accEntry ? accEntry.total : sale.total || 0,
-                        by:          sale.cashier || 'System',
-                        refId:       sale.inv,
-                        editable:    false
-                    });
-                }
-            });
-
-            // Also catch any db_acc entries that have no matching db_sales record (very old data)
-            (db_acc || []).forEach(sale => {
-                const existsInSales = (db_sales || []).some(s => s.inv === sale.inv);
-                if (!existsInSales) {
-                    add({
-                        id:          `sale_${sale.inv}`,
-                        timestamp:   sale.timestamp || Date.now(),
-                        type:        'income',
-                        source:      'sale',
-                        category:    'Product Sales',
-                        product:     'Product Sales',
-                        description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'}`,
-                        amount:      sale.total || 0,
-                        by:          sale.cashier || 'System',
-                        refId:       sale.inv,
-                        editable:    false
-                    });
-                }
-            });
-
-            // ── 2. Procurement expenses ────────────────────────────────────────
-            (db_purch || []).forEach(p => {
-                const pid   = p.id || (`${p.timestamp}_${p.name}`);
-                const total = p.totalCost || ((+p.qty || 0) * (+p.unitCost || 0));
-                add({
-                    id:          `purch_${pid}`,
-                    timestamp:   p.timestamp || Date.now(),
-                    type:        'expense',
-                    source:      'purchase',
-                    category:    p.name || 'Purchase',
-                    product:     p.name || 'Purchase',
-                    description: `Purchase: ${p.qty}× ${p.name || 'Item'} @ ₦${(+p.unitCost||0).toLocaleString()}/unit`,
-                    amount:      total,
-                    by:          p.by || 'System',
-                    editable:    false
-                });
-            });
-
-            // ── 3. Manual entries (Update Balance, etc.) ───────────────────────
-            (db_financeLog || []).forEach(e => {
-                add({ ...e, editable: true });
-            });
-
-            return entries.sort((a, b) => b.timestamp - a.timestamp);
-        }
-
-        // Populate the product filter dropdown with all known categories in the ledger
-        function populateProductFilter() {
-            const sel = document.getElementById('fl-product');
-            if (!sel) return;
-            const current = sel.value;
-            const allEntries = getFinanceLedgerEntries();
-            const prods = new Set();
-            allEntries.forEach(e => { if (e.product) prods.add(e.product); });
-            const sorted = Array.from(prods).sort();
-            sel.innerHTML = '<option value="all">All Products</option>' +
-                sorted.map(p => `<option value="${escapeHtml(p)}" ${current===p?'selected':''}>${escapeHtml(p)}</option>`).join('');
-        }
-
-        function filterFinanceLedger() {
-            let entries = getFinanceLedgerEntries();
-            const period  = (document.getElementById('fl-period')  || {}).value || 'all';
-            const typeF   = (document.getElementById('fl-type')    || {}).value || 'all';
-            const prodF   = (document.getElementById('fl-product') || {}).value || 'all';
-            const search  = ((document.getElementById('fl-search') || {}).value || '').trim().toLowerCase();
-            const now = Date.now(), msDay = 86400000;
-
-            if (period !== 'all') {
-                const limits = { daily: msDay, weekly: msDay*7, biweekly: msDay*14, monthly: msDay*30, yearly: msDay*365 };
-                entries = entries.filter(e => (now - e.timestamp) <= (limits[period] || 0));
-            }
-            if (typeF !== 'all')  entries = entries.filter(e => e.type === typeF);
-            if (prodF !== 'all')  entries = entries.filter(e => (e.product || e.category || '') === prodF);
-            if (search) entries = entries.filter(e =>
-                (e.description||'').toLowerCase().includes(search) ||
-                (e.category||'').toLowerCase().includes(search) ||
-                (e.product||'').toLowerCase().includes(search) ||
-                (e.by||'').toLowerCase().includes(search)
-            );
-            return entries;
-        }
-
-        function renderFinanceLedger() {
-            // Keep product dropdown up to date
-            populateProductFilter();
-
-            const entries   = filterFinanceLedger();
-            const groupBy   = (document.getElementById('fl-group') || {}).value || 'none';
-            const container = document.getElementById('finance-ledger-body');
-            if (!container) return;
-
-            // ── Summary metrics ──────────────────────────────────────────────
-            const totalIn  = entries.filter(e => e.type==='income').reduce((s,e)=>s+e.amount, 0);
-            const totalOut = entries.filter(e => e.type==='expense').reduce((s,e)=>s+e.amount, 0);
-            const net      = totalIn - totalOut;
-            const metricsEl = document.getElementById('finance-metrics');
-            if (metricsEl) metricsEl.innerHTML = `
-                <div class="metric-card" style="border-left-color:#27ae60;">
-                    <h4>Total Income</h4>
-                    <h2 style="color:#27ae60;">₦${totalIn.toLocaleString()}</h2>
-                    <small>${entries.filter(e=>e.type==='income').length} entries</small>
-                </div>
-                <div class="metric-card" style="border-left-color:#e74c3c;">
-                    <h4>Total Expenses</h4>
-                    <h2 style="color:#e74c3c;">₦${totalOut.toLocaleString()}</h2>
-                    <small>${entries.filter(e=>e.type==='expense').length} entries</small>
-                </div>
-                <div class="metric-card" style="border-left-color:${net>=0?'#00A09D':'#e74c3c'};">
-                    <h4>Net Movement</h4>
-                    <h2 style="color:${net>=0?'#00A09D':'#e74c3c'};">${net>=0?'+':''}₦${Math.abs(net).toLocaleString()}</h2>
-                    <small>${entries.length} total entries</small>
-                </div>
-                <div class="metric-card" style="border-left-color:var(--odoo-purple);">
-                    <h4>Account Balance</h4>
-                    <h2 style="color:var(--odoo-purple);">₦${db_finance.toLocaleString()}</h2>
-                    <small>Current cash on hand</small>
-                </div>`;
-
-            if (!entries.length) {
-                container.innerHTML = `<div class="card" style="text-align:center;padding:48px;color:#7f8c8d;font-size:15px;">No transactions found for this filter.</div>`;
-                return;
-            }
-
-            // ── Row renderer ─────────────────────────────────────────────────
-            const rowHtml = (e, shade) => {
-                const dt      = new Date(e.timestamp);
-                const dateStr = dt.toLocaleDateString('en-NG', { day:'2-digit', month:'short', year:'numeric' });
-                const timeStr = dt.toLocaleTimeString('en-NG', { hour:'2-digit', minute:'2-digit' });
-                const isIn    = e.type === 'income';
-
-                const srcBadge = e.source === 'sale'
-                    ? `<span style="background:#d4edda;color:#155724;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">SALE</span>`
-                    : e.source === 'purchase'
-                    ? `<span style="background:#f8d7da;color:#721c24;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">PURCHASE</span>`
-                    : `<span style="background:#e2e3ff;color:#3730a3;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">MANUAL</span>`;
-
-                const actions = e.editable
-                    ? `<button onclick="openEditFinanceEntry('${String(e.id).replace(/'/g,"\\'")}')" title="Edit"
-                           style="border:none;background:none;cursor:pointer;font-size:15px;padding:2px 4px;">✏️</button>
-                       <button onclick="deleteFinanceEntry('${String(e.id).replace(/'/g,"\\'")}')" title="Delete"
-                           style="border:none;background:none;cursor:pointer;font-size:15px;padding:2px 4px;">🗑️</button>`
-                    : `<span style="color:#ccc;font-size:11px;">—</span>`;
-
-                return `<tr style="background:${shade};">
-                    <td style="color:#7f8c8d;font-size:12px;white-space:nowrap;">
-                        ${dateStr}<br><span style="font-size:11px;">${timeStr}</span>
-                    </td>
-                    <td>${srcBadge}</td>
-                    <td style="max-width:260px;">
-                        <span style="font-size:13px;">${escapeHtml(e.description || '')}</span>
-                        ${e.by && e.by !== 'System' ? `<br><span style="font-size:11px;color:#aaa;">by ${escapeHtml(e.by)}</span>` : ''}
-                        ${e.editedAt ? `<br><span style="font-size:10px;color:#bbb;">edited</span>` : ''}
-                    </td>
-                    <td>
-                        <span style="background:#f0f2f5;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap;">
-                            ${escapeHtml(e.product || e.category || '—')}
-                        </span>
-                    </td>
-                    <td style="text-align:right;font-weight:700;color:${isIn?'#27ae60':'#e74c3c'};white-space:nowrap;">
-                        ${isIn?'+':'−'}₦${e.amount.toLocaleString()}
-                    </td>
-                    <td style="text-align:center;white-space:nowrap;">${actions}</td>
-                </tr>`;
-            };
-
-            // ── Table wrapper with header + footer totals ─────────────────────
-            const tableWrap = (rows, tIn, tOut, label) => {
-                const tNet = tIn - tOut;
-                const hdr  = label
-                    ? `<div style="padding:11px 16px;background:#f5f6fa;border-bottom:2px solid var(--odoo-purple);font-weight:700;font-size:14px;color:var(--odoo-purple);">${escapeHtml(label)}</div>`
-                    : '';
-                return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:18px;">
-                    ${hdr}
-                    <div class="table-responsive" style="margin:0;">
-                    <table>
-                    <thead><tr>
-                        <th style="width:90px;">Date</th>
-                        <th style="width:84px;">Source</th>
-                        <th>Description</th>
-                        <th style="width:140px;">Product / Category</th>
-                        <th style="text-align:right;width:120px;">Amount</th>
-                        <th style="width:64px;text-align:center;">Edit</th>
-                    </tr></thead>
-                    <tbody>${rows}</tbody>
-                    <tfoot><tr style="background:#eef2fa;">
-                        <td colspan="3" style="font-weight:700;font-size:13px;padding:10px 14px;color:#2c3e50;">
-                            <span style="color:#27ae60;">In: ₦${tIn.toLocaleString()}</span>
-                            &nbsp;&middot;&nbsp;
-                            <span style="color:#e74c3c;">Out: ₦${tOut.toLocaleString()}</span>
-                        </td>
-                        <td colspan="3" style="text-align:right;font-weight:800;padding:10px 14px;color:${tNet>=0?'#27ae60':'#e74c3c'};">
-                            Net: ${tNet>=0?'+':''}₦${Math.abs(tNet).toLocaleString()}
-                        </td>
-                    </tr></tfoot>
-                    </table></div></div>`;
-            };
-
-            const buildTable = (grp, label) => {
-                const rows = grp.map((e,i) => rowHtml(e, i%2===0 ? '#fff' : '#fafafa')).join('');
-                const tIn  = grp.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount, 0);
-                const tOut = grp.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount, 0);
-                return tableWrap(rows, tIn, tOut, label);
-            };
-
-            // ── Apply grouping ────────────────────────────────────────────────
-            if (groupBy === 'none') {
-                container.innerHTML = buildTable(entries, '');
-
-            } else if (groupBy === 'product') {
-                const groups = {};
-                entries.forEach(e => {
-                    const k = e.product || e.category || 'Uncategorised';
-                    if (!groups[k]) groups[k] = [];
-                    groups[k].push(e);
-                });
-                container.innerHTML = Object.keys(groups).sort().map(k => buildTable(groups[k], k)).join('');
-
-            } else if (groupBy === 'month') {
-                const groups = {};
-                entries.forEach(e => {
-                    const k = new Date(e.timestamp).toLocaleDateString('en-NG', { month:'long', year:'numeric' });
-                    if (!groups[k]) groups[k] = [];
-                    groups[k].push(e);
-                });
-                container.innerHTML = Object.keys(groups).map(k => buildTable(groups[k], k)).join('');
-
-            } else if (groupBy === 'type') {
-                let html = '';
-                ['income','expense'].forEach(t => {
-                    const grp = entries.filter(e => e.type === t);
-                    if (!grp.length) return;
-                    html += buildTable(grp, t === 'income' ? '💚 Income' : '🔴 Expenses');
-                });
-                container.innerHTML = html;
-            }
-        }
-
-        // ── Open edit modal for a manual finance entry ─────────────────────────
-        function openEditFinanceEntry(id) {
-            const entry = (db_financeLog || []).find(e => String(e.id) === String(id));
-            if (!entry) return showToast('Entry not found.', 'error');
-            document.getElementById('edit-fe-id').value       = String(id);
-            document.getElementById('edit-fe-type').value     = entry.type === 'income' ? 'add' : 'remove';
-            document.getElementById('edit-fe-amount').value   = entry.amount;
-            document.getElementById('edit-fe-reason').value   = entry.description || '';
-            document.getElementById('edit-fe-category').value = entry.product || entry.category || '';
-            document.getElementById('modal-edit-finance').style.display = 'flex';
-        }
-
-        async function saveEditFinanceEntry() {
-            const id       = document.getElementById('edit-fe-id').value;
-            const type     = document.getElementById('edit-fe-type').value;
-            const rawAmt   = parseFloat(document.getElementById('edit-fe-amount').value);
-            const reason   = document.getElementById('edit-fe-reason').value.trim();
-            const category = document.getElementById('edit-fe-category').value.trim() || 'General';
-
-            if (!rawAmt || rawAmt <= 0) return showToast('Enter a valid amount.', 'error');
-            if (!reason)                return showToast('Reason / description is required.', 'error');
-
-            const idx = (db_financeLog || []).findIndex(e => String(e.id) === String(id));
-            if (idx === -1) return showToast('Entry not found.', 'error');
-
-            const old      = db_financeLog[idx];
-            const oldDelta = old.type === 'income' ? old.amount : -old.amount;
-            const newDelta = type === 'add'        ? rawAmt     : -rawAmt;
-            db_finance     = db_finance - oldDelta + newDelta;
-
-            db_financeLog[idx] = {
-                ...old,
-                type:        type === 'add' ? 'income' : 'expense',
-                amount:      rawAmt,
-                description: reason,
-                category,
-                product:     category,
-                editedAt:    Date.now(),
-                editedBy:    user ? user.name : 'Admin'
-            };
-
-            document.getElementById('modal-edit-finance').style.display = 'none';
-            await persist();
-            renderFinanceLedger();
-            showToast('Entry updated and balance adjusted.');
-        }
-
-        async function deleteFinanceEntry(id) {
-            showConfirm('Delete this finance entry? The account balance will be adjusted automatically.', async () => {
-                const idx = (db_financeLog || []).findIndex(e => String(e.id) === String(id));
-                if (idx === -1) return showToast('Entry not found.', 'error');
-                const old   = db_financeLog[idx];
-                const delta = old.type === 'income' ? old.amount : -old.amount;
-                db_finance -= delta;
-                db_financeLog.splice(idx, 1);
-                await persist();
-                renderFinanceLedger();
-                showToast('Entry deleted and balance adjusted.');
-            });
-        }
-
-        function exportFinanceLedgerExcel() {
-            if (typeof XLSX === 'undefined') return showToast('Excel library not loaded', 'error');
-            const entries = filterFinanceLedger();
-            const rows = [['Date','Time','Source','Type','Product / Category','Description','Amount (₦)','By']];
-            entries.forEach(e => {
-                const dt = new Date(e.timestamp);
-                rows.push([
-                    dt.toLocaleDateString('en-NG'),
-                    dt.toLocaleTimeString('en-NG', { hour:'2-digit', minute:'2-digit' }),
-                    e.source || 'manual',
-                    e.type,
-                    e.product || e.category || '',
-                    e.description || '',
-                    e.amount,
-                    e.by || ''
-                ]);
-            });
-            const ws = XLSX.utils.aoa_to_sheet(rows);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, 'Finance Ledger');
-            XLSX.writeFile(wb, `finance_ledger_${new Date().toISOString().slice(0,10)}.xlsx`);
-            showToast('Finance ledger exported!');
-        }
-
+    
 </script></body>
 </html>
