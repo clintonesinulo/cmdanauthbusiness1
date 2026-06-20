@@ -2528,17 +2528,35 @@ function staffNormalizeProducts(items) {
             const timestamp = Date.now();
             const receiptDateTime = new Date(timestamp).toLocaleString('en-NG', { dateStyle: 'full', timeStyle: 'medium' });
 
+            // ── Snapshot the discount ratio so each item's ledger revenue
+            //    reflects EXACTLY what was actually received, frozen forever
+            //    regardless of future price/cost changes ──
+            const discountRatio = subtotal > 0 ? (finalTotal / subtotal) : 1;
+
             // Deduct stock + consume FIFO cost layers regardless of payment method
-            saleItems.forEach(c => {
+            // and build a permanent per-item snapshot (name, unit price, cost,
+            // and post-discount line revenue) at the moment of sale.
+            const itemSnapshots = saleItems.map(c => {
                 const idx = db_inv.findIndex(x => x.id == c.id);
+                let name = 'Item', unitPrice = 0, unitCost = 0, groupName = 'Other Products';
                 if (idx > -1) {
+                    name      = db_inv[idx].name;
+                    unitPrice = db_inv[idx].price;
+                    unitCost  = _fifoConsumeCost(db_inv[idx].costLayers, c.qty, db_inv[idx].cost) / c.qty;
+                    groupName = variantGroupName(db_inv[idx].id) || db_inv[idx].name || 'Other Products';
                     db_inv[idx].stock -= c.qty;
                     db_inv[idx].sales  = (db_inv[idx].sales || 0) + c.qty;
                     _fifoDeductLayers(db_inv[idx].costLayers, c.qty);
-                    // Update display cost to reflect remaining layers
                     if (db_inv[idx].costLayers && db_inv[idx].costLayers.length)
                         db_inv[idx].cost = _weightedAvgCost(db_inv[idx].costLayers);
                 }
+                const rawLineTotal = unitPrice * c.qty;
+                return {
+                    id: c.id, name, group: groupName, qty: c.qty,
+                    price: unitPrice,                              // frozen unit price at sale time
+                    cost:  unitCost,                                // frozen unit cost at sale time
+                    lineRevenue: rawLineTotal * discountRatio        // frozen, post-discount, actual cash for this line
+                };
             });
 
             const rawDiscVal = parseFloat(document.getElementById('pos-discount').value) || 0;
@@ -2548,10 +2566,7 @@ function staffNormalizeProducts(items) {
             currentInvoice = {
                 inv: invNum, customer: cust, cashier, timestamp, paymentMethod,
                 date: receiptDateTime,
-                items: saleItems.map(c => {
-                    const p = db_inv.find(x => x.id == c.id);
-                    return { id: c.id, name: p ? p.name : 'Item', qty: c.qty, price: p ? p.price : 0, cost: p ? p.cost : 0 };
-                }),
+                items: itemSnapshots,
                 subtotal, discount: disc, discountLabel, total: finalTotal, profit
             };
 
@@ -2566,7 +2581,7 @@ function staffNormalizeProducts(items) {
                 // If deposit covers everything, treat as immediate full payment
                 if (deposit >= finalTotal) {
                     db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)' });
-                    db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)', items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
+                    db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)', items: itemSnapshots });
                     db_finance += finalTotal;
                     const sIdx = db_staff.findIndex(x => x.id == user.id);
                     if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
@@ -2583,7 +2598,7 @@ function staffNormalizeProducts(items) {
                         inv: invNum, customer: cust, cashier, timestamp,
                         date: new Date(timestamp).toLocaleDateString(),
                         dueDate, total: finalTotal, profit, cost: totalCost, paymentMethod,
-                        items: saleItems.map(c => ({ id: c.id, qty: c.qty })),
+                        items: itemSnapshots,
                         subtotal, discount: disc, status: 'pending',
                         amountPaid: deposit, instalments
                     });
@@ -2612,7 +2627,7 @@ function staffNormalizeProducts(items) {
             } else {
                 // ── CASH / CARD: post immediately ──
                 db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
-                db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
+                db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: itemSnapshots });
                 db_finance += finalTotal;
                 // NOTE: sale entries are NOT pushed to db_financeLog here.
                 // getFinanceLedgerEntries() builds them live from db_sales/db_acc
@@ -3672,7 +3687,7 @@ function staffNormalizeProducts(items) {
             };
 
             // ── 1. POS Sales — expanded per product group ──────────────────────
-            // db_sales has {inv, timestamp, items:[{id,qty}], customer, cashier, paymentMethod, total}
+            // db_sales has {inv, timestamp, items:[{id,qty,group,price,cost,lineRevenue}], customer, cashier, paymentMethod, total}
             // db_acc has the same invoices but only totals — use db_sales for detail
             const accInvs = new Set((db_acc || []).map(a => a.inv));
 
@@ -3680,17 +3695,43 @@ function staffNormalizeProducts(items) {
                 // Only show confirmed (posted) sales that are in db_acc
                 if (!accInvs.has(sale.inv)) return;
 
-                // Aggregate items into product groups for this sale
                 const groupTotals = {};
+                let rawSubtotal = 0;
+                let usedSnapshot = true;
+
                 (sale.items || []).forEach(item => {
-                    const grpName = variantGroupName(item.id) || 'Other Products';
-                    const v = (db_inv || []).find(x => String(x.id) === String(item.id));
-                    const lineTotal = (+item.qty || 0) * (v ? +v.price || 0 : 0);
-                    if (!groupTotals[grpName]) groupTotals[grpName] = 0;
-                    groupTotals[grpName] += lineTotal;
+                    if (item.lineRevenue !== undefined && item.group !== undefined) {
+                        // ── NEW sales: use the frozen snapshot taken at sale time ──
+                        // Immune to later price/cost changes and already reflects
+                        // the actual discounted cash received for this line.
+                        const grpName = item.group || 'Other Products';
+                        if (!groupTotals[grpName]) groupTotals[grpName] = 0;
+                        groupTotals[grpName] += item.lineRevenue;
+                        rawSubtotal += (+item.qty || 0) * (+item.price || 0);
+                    } else {
+                        // ── Legacy sales (recorded before snapshotting existed) ──
+                        // Fall back to live price lookup, scaled for discount below.
+                        usedSnapshot = false;
+                        const grpName = variantGroupName(item.id) || 'Other Products';
+                        const v = (db_inv || []).find(x => String(x.id) === String(item.id));
+                        const lineTotal = (+item.qty || 0) * (v ? +v.price || 0 : 0);
+                        if (!groupTotals[grpName]) groupTotals[grpName] = 0;
+                        groupTotals[grpName] += lineTotal;
+                        rawSubtotal += lineTotal;
+                    }
                 });
 
-                // If items are empty or totals don't add up (legacy data), fall back to one lump entry
+                // ── For legacy (un-snapshotted) sales only: scale totals down to
+                // match the ACTUAL cash received, since rawSubtotal was computed
+                // from today's live price and may not reflect any discount given.
+                const actualTotal = (sale.total !== undefined ? sale.total : rawSubtotal);
+                const discountApplied = !usedSnapshot && rawSubtotal > 0 && Math.abs(rawSubtotal - actualTotal) > 0.01;
+                if (!usedSnapshot && discountApplied) {
+                    const scale = actualTotal / rawSubtotal;
+                    Object.keys(groupTotals).forEach(g => { groupTotals[g] *= scale; });
+                }
+
+                // If items are empty (very old/legacy data), fall back to one lump entry
                 const hasGroups = Object.keys(groupTotals).length > 0;
                 if (hasGroups) {
                     Object.entries(groupTotals).forEach(([grp, amt], gi) => {
@@ -3701,7 +3742,7 @@ function staffNormalizeProducts(items) {
                             source:      'sale',
                             category:    grp,
                             product:     grp,
-                            description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'} · ${grp}`,
+                            description: `Sale ${sale.inv} — ${sale.customer || 'Walk-in'} · ${grp}${discountApplied ? ' (discount applied)' : ''}`,
                             amount:      amt,
                             by:          sale.cashier || 'System',
                             refId:       sale.inv,
