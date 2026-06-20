@@ -1034,6 +1034,27 @@
   </div>
 </div>
 
+<div id="modal-correct-amount" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:8300; justify-content:center; align-items:center; padding:16px;">
+  <div class="card" style="width:min(440px,96vw); max-height:92vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <h3 style="color:var(--odoo-purple);">✏️ Correct Amount</h3>
+      <button onclick="document.getElementById('modal-correct-amount').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:#7f8c8d;padding:4px;">✖</button>
+    </div>
+    <div class="mini" style="margin-bottom:16px;">Use this to fix a record saved wrong — for example a discount that wasn't deducted before the system tracked discounts automatically.</div>
+    <input type="hidden" id="ca-entry-id"/>
+    <div id="ca-current-info" style="background:#f5f6fa;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#555;"></div>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Correct Amount (₦) <span style="color:#e74c3c;">*</span></label>
+    <input id="ca-new-amount" type="number" min="0" placeholder="Enter the correct amount" style="margin-bottom:8px;" oninput="previewCorrection()"/>
+    <div id="ca-preview" style="font-size:12px;margin-bottom:12px;padding:8px 12px;border-radius:6px;display:none;"></div>
+    <label style="font-size:13px;font-weight:600;color:#5f6368;margin-bottom:4px;display:block;">Reason for Correction</label>
+    <input id="ca-reason" type="text" placeholder="e.g. Discount wasn't recorded correctly" style="margin-bottom:18px;"/>
+    <div style="display:flex;gap:10px;">
+      <button class="btn-odoo btn-teal" style="flex:1;" onclick="saveCorrectAmount()">💾 Save Correction</button>
+      <button onclick="document.getElementById('modal-correct-amount').style.display='none'" style="flex:1;background:none;border:1px solid #ddd;border-radius:6px;padding:11px;cursor:pointer;font-size:14px;font-weight:600;color:#555;">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== FINANCE LEDGER SCREEN ===== -->
 <div class="screen" id="finance">
   <div style="display:flex; justify-content:space-between; margin-bottom:16px; gap:10px; flex-wrap:wrap; align-items:flex-start;">
@@ -3746,7 +3767,10 @@ function staffNormalizeProducts(items) {
                             amount:      amt,
                             by:          sale.cashier || 'System',
                             refId:       sale.inv,
-                            editable:    false
+                            saleInv:     sale.inv,
+                            groupName:   grp,
+                            editable:    true,
+                            correctable: true
                         });
                     });
                 } else {
@@ -3763,7 +3787,10 @@ function staffNormalizeProducts(items) {
                         amount:      accEntry ? accEntry.total : sale.total || 0,
                         by:          sale.cashier || 'System',
                         refId:       sale.inv,
-                        editable:    false
+                        saleInv:     sale.inv,
+                        groupName:   'Product Sales',
+                        editable:    true,
+                        correctable: true
                     });
                 }
             });
@@ -3802,7 +3829,9 @@ function staffNormalizeProducts(items) {
                     description: `Purchase: ${p.qty}× ${p.name || 'Item'} @ ₦${(+p.unitCost||0).toLocaleString()}/unit`,
                     amount:      total,
                     by:          p.by || 'System',
-                    editable:    false
+                    purchTs:     p.timestamp,
+                    editable:    true,
+                    correctable: true
                 });
             });
 
@@ -3922,7 +3951,10 @@ function staffNormalizeProducts(items) {
                     ? `<span style="background:#f8d7da;color:#721c24;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">PURCHASE</span>`
                     : `<span style="background:#e2e3ff;color:#3730a3;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">MANUAL</span>`;
 
-                const actions = e.editable
+                const actions = e.correctable
+                    ? `<button onclick="openCorrectAmountModal('${String(e.id).replace(/'/g,"\\'")}')" title="Correct this amount (e.g. fix a discount that wasn't deducted)"
+                           style="border:none;background:none;cursor:pointer;font-size:15px;padding:2px 4px;">✏️</button>`
+                    : e.editable
                     ? `<button onclick="openEditFinanceEntry('${String(e.id).replace(/'/g,"\\'")}')" title="Edit"
                            style="border:none;background:none;cursor:pointer;font-size:15px;padding:2px 4px;">✏️</button>
                        <button onclick="deleteFinanceEntry('${String(e.id).replace(/'/g,"\\'")}')" title="Delete"
@@ -4021,6 +4053,106 @@ function staffNormalizeProducts(items) {
                 });
                 container.innerHTML = html;
             }
+        }
+
+        // ── Correct a sale or purchase amount directly (fixes legacy errors
+        //    like discounts that weren't deducted before the fix was added).
+        //    This updates the SOURCE record (db_sales/db_acc/db_purch) and
+        //    db_finance together, so the correction is permanent and the
+        //    ledger, accounting, and balance all stay in sync. ──────────────
+        function openCorrectAmountModal(entryId) {
+            const entries = getFinanceLedgerEntries();
+            const entry = entries.find(e => String(e.id) === String(entryId));
+            if (!entry) return showToast('Entry not found.', 'error');
+            if (!entry.correctable) return showToast('This entry type cannot be corrected here.', 'error');
+
+            document.getElementById('ca-entry-id').value = String(entryId);
+            const info = document.getElementById('ca-current-info');
+            info.innerHTML = `
+                <div><b>${entry.source === 'sale' ? '🧾 Sale' : '📦 Purchase'}:</b> ${escapeHtml(entry.description || '')}</div>
+                <div style="margin-top:4px;">Current recorded amount: <strong style="color:${entry.type==='income'?'#27ae60':'#e74c3c'};">₦${entry.amount.toLocaleString()}</strong></div>
+            `;
+            document.getElementById('ca-new-amount').value = '';
+            document.getElementById('ca-reason').value = '';
+            document.getElementById('ca-preview').style.display = 'none';
+            document.getElementById('modal-correct-amount').style.display = 'flex';
+        }
+
+        function previewCorrection() {
+            const id = document.getElementById('ca-entry-id').value;
+            const entries = getFinanceLedgerEntries();
+            const entry = entries.find(e => String(e.id) === String(id));
+            if (!entry) return;
+            const newAmt = parseFloat(document.getElementById('ca-new-amount').value);
+            const prev = document.getElementById('ca-preview');
+            if (isNaN(newAmt) || newAmt < 0) { prev.style.display = 'none'; return; }
+            const diff = newAmt - entry.amount;
+            prev.style.display = 'block';
+            if (Math.abs(diff) < 0.01) {
+                prev.style.background = '#f5f6fa'; prev.style.color = '#555'; prev.style.border = '1px solid #ddd';
+                prev.textContent = 'No change from current amount.';
+            } else if (diff < 0) {
+                prev.style.background = '#fff3f3'; prev.style.color = '#c0392b'; prev.style.border = '1px solid #f5c6cb';
+                prev.textContent = `This will REDUCE the recorded amount by ₦${Math.abs(diff).toLocaleString()} (e.g. correcting a missed discount). Balance will be adjusted by the same amount.`;
+            } else {
+                prev.style.background = '#eafaf1'; prev.style.color = '#1e7e34'; prev.style.border = '1px solid #c3e6cb';
+                prev.textContent = `This will INCREASE the recorded amount by ₦${diff.toLocaleString()}. Balance will be adjusted by the same amount.`;
+            }
+        }
+
+        async function saveCorrectAmount() {
+            const id = document.getElementById('ca-entry-id').value;
+            const newAmt = parseFloat(document.getElementById('ca-new-amount').value);
+            const reason = document.getElementById('ca-reason').value.trim();
+            if (isNaN(newAmt) || newAmt < 0) return showToast('Enter a valid amount.', 'error');
+
+            const entries = getFinanceLedgerEntries();
+            const entry = entries.find(e => String(e.id) === String(id));
+            if (!entry) return showToast('Entry not found.', 'error');
+
+            const diff = newAmt - entry.amount; // positive = increase, negative = decrease
+
+            if (entry.source === 'sale') {
+                // Correct the underlying sale's total proportionally.
+                // For grouped (multi-product) sales, the correction is applied
+                // to the WHOLE invoice total, scaled by this line's share.
+                const saleIdx = (db_sales || []).findIndex(s => s.inv === entry.saleInv);
+                const accIdx  = (db_acc   || []).findIndex(a => a.inv === entry.saleInv);
+                if (saleIdx === -1 && accIdx === -1) return showToast('Original sale record not found.', 'error');
+
+                const sale = db_sales[saleIdx] || db_acc[accIdx];
+                const oldTotal = sale.total || entry.amount;
+                // Work out this row's share of the invoice total, then apply
+                // the new amount for that share and recompute the full total.
+                const share = oldTotal > 0 ? (entry.amount / oldTotal) : 1;
+                const newTotalForRow = newAmt;
+                const newInvoiceTotal = share > 0 ? oldTotal - entry.amount + newTotalForRow : newTotalForRow;
+
+                if (saleIdx > -1) db_sales[saleIdx].total = newInvoiceTotal;
+                if (accIdx  > -1) db_acc[accIdx].total    = newInvoiceTotal;
+                // Recompute profit using the same cost (cost doesn't change, only revenue)
+                const costVal = (db_sales[saleIdx] || db_acc[accIdx]).cost || 0;
+                if (saleIdx > -1) db_sales[saleIdx].profit = newInvoiceTotal - costVal;
+                if (accIdx  > -1) db_acc[accIdx].profit    = newInvoiceTotal - costVal;
+
+                // Adjust the live balance by the difference
+                db_finance += diff;
+
+            } else if (entry.source === 'purchase') {
+                const pIdx = (db_purch || []).findIndex(p => p.timestamp === entry.purchTs);
+                if (pIdx === -1) return showToast('Original purchase record not found.', 'error');
+                db_purch[pIdx].totalCost = newAmt;
+                if (db_purch[pIdx].qty) db_purch[pIdx].unitCost = newAmt / db_purch[pIdx].qty;
+                // Purchases are an expense — balance moves the OPPOSITE way of diff
+                db_finance -= diff;
+            }
+
+            document.getElementById('modal-correct-amount').style.display = 'none';
+            await persist();
+            renderFinanceLedger();
+            const navEl = document.getElementById('account-balance-nav');
+            if (navEl) navEl.innerText = db_finance.toLocaleString();
+            showToast(`✅ Amount corrected. Balance adjusted by ₦${Math.abs(diff).toLocaleString()}.${reason ? ' Reason: ' + reason : ''}`, 'success');
         }
 
         // ── Open edit modal for a manual finance entry ─────────────────────────
