@@ -2613,13 +2613,9 @@ function staffNormalizeProducts(items) {
                 db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod });
                 db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod, items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
                 db_finance += finalTotal;
-                // Log to unified finance ledger — one entry per product line
-                if (!db_financeLog) db_financeLog = [];
-                saleItems.forEach(c => {
-                    const p = db_inv.find(x => x.id == c.id);
-                    const lineTotal = (p ? p.price : 0) * c.qty;
-                    db_financeLog.push({ id: Date.now() + Math.random(), timestamp, type: 'income', source: 'sale', category: p ? p.name : 'Unknown', product: p ? p.name : 'Unknown', description: `Sale: ${c.qty}× ${p ? p.name : 'Item'} (${invNum})`, amount: lineTotal, by: cashier });
-                });
+                // NOTE: sale entries are NOT pushed to db_financeLog here.
+                // getFinanceLedgerEntries() builds them live from db_sales/db_acc
+                // to avoid duplicate rows in the Finance Ledger.
                 const sIdx = db_staff.findIndex(x => x.id == user.id);
                 if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
                 persist();
@@ -3121,19 +3117,9 @@ function staffNormalizeProducts(items) {
                 prevCost,
                 timestamp: Date.now()
             });
-            // Log to unified finance ledger
-            if (!db_financeLog) db_financeLog = [];
-            db_financeLog.push({
-                id: 'purch_' + Date.now(),
-                timestamp: Date.now(),
-                type: 'expense',
-                source: 'purchase',
-                category: db_inv[pIdx].name,
-                product: db_inv[pIdx].name,
-                description: `Purchase: ${qty}× ${db_inv[pIdx].name} @ ₦${unitCost.toLocaleString()}/unit`,
-                amount: totalCost,
-                by: user ? user.name : 'System'
-            });
+            // NOTE: purchase entries are NOT pushed to db_financeLog here.
+            // getFinanceLedgerEntries() builds them live from db_purch
+            // to avoid duplicate rows in the Finance Ledger.
             document.getElementById('buy-qty').value  = '';
             document.getElementById('buy-cost').value = '';
             const preview = document.getElementById('unit-cost-preview');
