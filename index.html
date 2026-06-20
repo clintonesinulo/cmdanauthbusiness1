@@ -1042,6 +1042,7 @@
       <div class="mini">Unified record of all income and expenditure — product sales, purchases and manual entries.</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn-odoo" style="padding:8px 14px;font-size:13px;background:#34495e;color:white;" onclick="recallFinanceLedger()" title="Refresh the ledger and remove any leftover duplicate entries">🔄 Recall / Refresh</button>
       <button class="btn-odoo btn-teal" style="padding:8px 14px;font-size:13px;" onclick="exportFinanceLedgerExcel()">📥 Export Excel</button>
     </div>
   </div>
@@ -3626,6 +3627,38 @@ function staffNormalizeProducts(items) {
 
         // Build a fully unified, deduplicated list of all financial activity.
         // Sales are broken down per product group (using db_sales items + db_inv).
+        // ── Recall / Refresh: force a clean re-pull of the ledger and
+        //    strip out any leftover legacy sale/purchase rows that were
+        //    previously saved directly into db_financeLog (now retired —
+        //    sales & purchases are built live from db_sales/db_acc/db_purch).
+        //    This is what removes duplicates if a sync didn't go out cleanly.
+        async function recallFinanceLedger() {
+            const before = (db_financeLog || []).length;
+            // Strip any old auto-generated 'sale' or 'purchase' source entries
+            // — these are legacy duplicates; manual entries (source:'manual')
+            // are always kept.
+            db_financeLog = (db_financeLog || []).filter(e => e.source === 'manual' || !e.source);
+            const removed = before - db_financeLog.length;
+
+            // Reset filters back to defaults so nothing hides the refreshed data
+            const periodEl = document.getElementById('fl-period');
+            const typeEl   = document.getElementById('fl-type');
+            const prodEl   = document.getElementById('fl-product');
+            const searchEl = document.getElementById('fl-search');
+            if (periodEl) periodEl.value = 'all';
+            if (typeEl)   typeEl.value   = 'all';
+            if (prodEl)   prodEl.value   = 'all';
+            if (searchEl) searchEl.value = '';
+
+            if (removed > 0) {
+                await persist();
+                showToast(`🔄 Ledger refreshed — removed ${removed} duplicate ${removed===1?'entry':'entries'}.`, 'success');
+            } else {
+                showToast('🔄 Ledger refreshed — no duplicates found.', 'success');
+            }
+            renderFinanceLedger();
+        }
+
         function getFinanceLedgerEntries() {
             if (!db_financeLog) db_financeLog = [];
             const seenIds = new Set();
