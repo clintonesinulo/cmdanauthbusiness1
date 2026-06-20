@@ -2567,6 +2567,13 @@ function staffNormalizeProducts(items) {
                     db_acc.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)' });
                     db_sales.push({ inv: invNum, customer: cust, cashier, timestamp, date: new Date(timestamp).toLocaleDateString(), total: finalTotal, profit, cost: totalCost, paymentMethod: 'Credit (Paid in Full at Sale)', items: saleItems.map(c => ({ id: c.id, qty: c.qty })) });
                     db_finance += finalTotal;
+                    // ── Log each line to financeLog ──
+                    if (!db_financeLog) db_financeLog = [];
+                    saleItems.forEach(c => {
+                        const _p = db_inv.find(x => x.id == c.id);
+                        const lineTotal = (_p ? _p.price : 0) * c.qty;
+                        db_financeLog.push({ id: Date.now() + Math.random(), timestamp, type: 'income', source: 'sale', category: _p ? _p.name : 'Unknown', product: _p ? _p.name : 'Unknown', description: `Sale: ${c.qty}× ${_p ? _p.name : 'Item'} (${invNum})`, amount: lineTotal, by: cashier });
+                    });
                     const sIdx = db_staff.findIndex(x => x.id == user.id);
                     if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
                     persist();
@@ -2574,7 +2581,7 @@ function staffNormalizeProducts(items) {
                     document.getElementById('pos-discount').value = '';
                     _discountType = 'flat'; setDiscountType('flat');
                     calculateTotal();
-                    renderPOS(); renderAccounting(); renderStaff(); renderReceipts();
+                    renderPOS(); renderAccounting(); renderStaff(); renderReceipts(); renderFinanceLedger();
                     printThermalReceipt(currentInvoice);
                     showToast(`✅ Credit fully settled at sale. Receipt printing!`, 'success');
                 } else {
@@ -2587,7 +2594,12 @@ function staffNormalizeProducts(items) {
                         amountPaid: deposit, instalments
                     });
                     // ── Deposit goes straight to balance (cash in hand) ──
-                    if (deposit > 0) db_finance += deposit;
+                    if (deposit > 0) {
+                        db_finance += deposit;
+                        // ── Log deposit to financeLog ──
+                        if (!db_financeLog) db_financeLog = [];
+                        db_financeLog.push({ id: Date.now() + Math.random(), timestamp, type: 'income', source: 'sale', category: 'Credit Deposit', product: 'Credit Deposit', description: `Deposit: ₦${deposit.toLocaleString()} for credit sale (${invNum}) — ${cust}`, amount: deposit, by: cashier });
+                    }
                     const sIdx = db_staff.findIndex(x => x.id == user.id);
                     if (sIdx > -1) db_staff[sIdx].salesCount = (db_staff[sIdx].salesCount || 0) + 1;
                     persist();
@@ -2794,6 +2806,9 @@ function staffNormalizeProducts(items) {
             db_finance += amount;
             const navEl = document.getElementById('account-balance-nav');
             if (navEl) navEl.innerText = db_finance.toLocaleString();
+            // ── Log instalment to financeLog ──
+            if (!db_financeLog) db_financeLog = [];
+            db_financeLog.push({ id: Date.now() + Math.random(), timestamp: Date.now(), type: 'income', source: 'sale', category: 'Credit Instalment', product: 'Credit Instalment', description: `Instalment: ₦${amount.toLocaleString()} for (${invNo}) — ${p.customer}${note ? ' | ' + note : ''}`, amount, by: user ? user.name : p.cashier });
 
             closeInstalmentModal();
 
@@ -2830,7 +2845,7 @@ function staffNormalizeProducts(items) {
                     subtotal: p.subtotal || p.total, discount: p.discount || 0,
                     total: p.total, profit: p.profit
                 });
-                renderPendingPayments(); renderReceipts(); renderAccounting();
+                renderPendingPayments(); renderReceipts(); renderAccounting(); renderFinanceLedger();
                 showToast(`🎉 ${invNo} fully paid! Receipt printing and accounts updated.`, 'success');
             } else {
                 // Partial — save then print instalment receipt
@@ -2865,9 +2880,14 @@ function staffNormalizeProducts(items) {
                 const alreadyCollected = p.amountPaid || 0;
                 const remainingBalance = Math.max(0, p.total - alreadyCollected);
                 db_finance += remainingBalance;
+                // ── Log remaining balance collected to financeLog ──
+                if (!db_financeLog) db_financeLog = [];
+                if (remainingBalance > 0) {
+                    db_financeLog.push({ id: Date.now() + Math.random(), timestamp: Date.now(), type: 'income', source: 'sale', category: 'Credit Approved', product: 'Credit Balance', description: `Credit approved: ₦${remainingBalance.toLocaleString()} balance collected (${invNo}) — ${p.customer}`, amount: remainingBalance, by: user ? user.name : p.cashier });
+                }
                 db_pending.splice(idx, 1);
                 await persist();
-                renderPendingPayments(); renderReceipts(); renderAccounting();
+                renderPendingPayments(); renderReceipts(); renderAccounting(); renderFinanceLedger();
                 showToast(`✅ Credit payment ${invNo} approved and posted!`, 'success');
             });
         }
@@ -2889,11 +2909,17 @@ function staffNormalizeProducts(items) {
                 // Refund only what was actually collected (deposits already in balance)
                 const collected = p.amountPaid || 0;
                 if (collected > 0) db_finance = Math.max(0, db_finance - collected);
+                // ── Remove all financeLog entries linked to this invoice ──
+                if (!db_financeLog) db_financeLog = [];
+                const _before = db_financeLog.length;
+                db_financeLog = db_financeLog.filter(e => !(e.source === 'sale' && (e.description || '').includes(invNo)));
+                const _removed = _before - db_financeLog.length;
                 db_pending.splice(idx, 1);
                 await persist();
-                renderPendingPayments(); renderInventory(); renderPOS(); renderAccounting();
+                renderPendingPayments(); renderInventory(); renderPOS(); renderAccounting(); renderFinanceLedger();
                 const refundMsg = collected > 0 ? ` ₦${collected.toLocaleString()} removed from balance.` : '';
-                showToast(`❌ Credit sale ${invNo} rejected — stock restored.${refundMsg}`, 'warning');
+                const removedMsg = _removed > 0 ? ` ${_removed} ledger entries removed.` : '';
+                showToast(`❌ Credit sale ${invNo} rejected — stock restored.${refundMsg}${removedMsg}`, 'warning');
             });
         }
 
@@ -2922,9 +2948,14 @@ function staffNormalizeProducts(items) {
                 // Remove from records
                 if (sIdx > -1) db_sales.splice(sIdx, 1);
                 if (aIdx > -1) db_acc.splice(aIdx, 1);
+                // ── Remove all financeLog entries linked to this invoice ──
+                if (!db_financeLog) db_financeLog = [];
+                const beforeCount = db_financeLog.length;
+                db_financeLog = db_financeLog.filter(e => !(e.source === 'sale' && (e.description || '').includes(invNo)));
+                const removed = beforeCount - db_financeLog.length;
                 await persist();
-                renderReceipts(); renderAccounting(); renderInventory(); renderPOS();
-                showToast(`🔁 Payment ${invNo} reversed. Stock restored, revenue adjusted.`, 'success');
+                renderReceipts(); renderAccounting(); renderInventory(); renderPOS(); renderFinanceLedger();
+                showToast(`🔁 Payment ${invNo} reversed. Stock restored, revenue adjusted.${removed ? ` (${removed} ledger entries removed)` : ''}`, 'success');
             });
         }
 
