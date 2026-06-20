@@ -1091,9 +1091,14 @@
         <input id="fl-search" type="text" placeholder="Search description…" oninput="renderFinanceLedger()" style="margin:0;padding:8px 10px;font-size:13px;width:100%;"/>
       </div>
       <div style="display:flex;flex-direction:column;justify-content:flex-end;">
-        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Balance</label>
-        <button onclick="recalcFinanceBalance()" title="Recalculate account balance from all ledger entries" style="background:linear-gradient(135deg,#00A09D,#007a77);color:white;border:none;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;box-shadow:0 2px 6px rgba(0,160,157,0.3);transition:opacity .15s;" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
-          🔄 Recalc Balance
+        <label style="font-size:11px;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Audit</label>
+        <button id="recalc-btn" onclick="recalcFinanceBalance()"
+          title="Audit all transactions, remove duplicates, then recalculate balance"
+          style="background:linear-gradient(135deg,#8e44ad,#6c3483);color:white;border:none;border-radius:8px;
+                 padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;
+                 display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(142,68,173,0.35);
+                 transition:opacity .15s;" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+          🔍 Audit &amp; Recalc
         </button>
       </div>
     </div>
@@ -3797,21 +3802,94 @@ function staffNormalizeProducts(items) {
         }
 
         async function recalcFinanceBalance() {
-            const btn = document.querySelector('[onclick="recalcFinanceBalance()"]');
-            if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Recalculating…'; }
+            const btn = document.getElementById('recalc-btn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Auditing…'; }
 
             if (!db_financeLog) db_financeLog = [];
+            if (!db_sales)      db_sales      = [];
+            if (!db_acc)        db_acc        = [];
+            if (!db_purch)      db_purch      = [];
 
-            // Sum every entry in the FULL ledger (not just the filtered view)
-            const recalcedBalance = db_financeLog.reduce((sum, e) => {
-                return e.type === 'income' ? sum + e.amount : sum - e.amount;
-            }, 0);
+            // ── BUILD INDEX SETS from authoritative sources ────────────────────
+            // Sales: an invoice is "valid" if it exists in BOTH db_sales AND db_acc
+            const confirmedSaleInvs = new Set(
+                db_sales
+                    .filter(s => db_acc.some(a => a.inv === s.inv))
+                    .map(s => s.inv)
+            );
 
-            const oldBalance = db_finance;
-            const diff = recalcedBalance - oldBalance;
+            // Purchases: keyed by timestamp (used as id in financeLog: 'purch_' + timestamp)
+            const confirmedPurchTs = new Set(db_purch.map(p => String(p.timestamp)));
+
+            // ── AUDIT db_financeLog — find orphan entries ──────────────────────
+            const orphans   = [];   // entries in financeLog that have no matching source record
+            const valid     = [];   // entries in financeLog that are clean
+
+            db_financeLog.forEach(entry => {
+                const src  = entry.source || 'manual';
+                const desc = entry.description || '';
+                const idStr = String(entry.id || '');
+
+                if (src === 'sale') {
+                    // Extract invoice number from description e.g. "Sale: 2× Item (INV-001)"
+                    // or "Deposit: ₦500 for credit sale (INV-001)"
+                    const invMatch = desc.match(/\((INV-\d+)\)/) || desc.match(/(INV-\d+)/);
+                    const inv = invMatch ? invMatch[1] : null;
+                    if (!inv || !confirmedSaleInvs.has(inv)) {
+                        orphans.push(entry);
+                    } else {
+                        valid.push(entry);
+                    }
+                } else if (src === 'purchase') {
+                    // financeLog purchase ids are 'purch_' + timestamp
+                    const tsMatch = idStr.match(/^purch_(\d+)$/);
+                    const ts = tsMatch ? tsMatch[1] : null;
+                    if (!ts || !confirmedPurchTs.has(ts)) {
+                        orphans.push(entry);
+                    } else {
+                        valid.push(entry);
+                    }
+                } else {
+                    // Manual entries (editable:true, source:'manual' or undefined) — always keep
+                    valid.push(entry);
+                }
+            });
+
+            // ── STEP 2: Remove orphan entries from db_financeLog ─────────────
+            const orphanCount = orphans.length;
+            db_financeLog = valid;
+
+            // ── STEP 3: Recalculate balance from ALL authoritative sources ────
+            // Income: sum totals from confirmed sales (db_acc is the authority for totals)
+            let incomeFromSales = 0;
+            db_acc.forEach(a => {
+                if (confirmedSaleInvs.has(a.inv)) incomeFromSales += (+a.total || 0);
+            });
+
+            // Also add deposits from pending sales (already collected cash)
+            let incomeFromDeposits = 0;
+            (db_pending || []).forEach(p => {
+                incomeFromDeposits += (+p.amountPaid || 0);
+            });
+
+            // Expense: sum all purchase costs from db_purch
+            let expenseFromPurchases = 0;
+            db_purch.forEach(p => {
+                expenseFromPurchases += (p.totalCost || ((+p.qty || 0) * (+p.unitCost || 0)));
+            });
+
+            // Manual entries: net sum from the cleaned db_financeLog
+            let manualNet = 0;
+            db_financeLog.forEach(e => {
+                manualNet += e.type === 'income' ? +e.amount : -(+e.amount);
+            });
+
+            const recalcedBalance = incomeFromSales + incomeFromDeposits - expenseFromPurchases + manualNet;
+            const oldBalance      = db_finance;
+            const diff            = recalcedBalance - oldBalance;
             db_finance = Math.max(0, recalcedBalance);
 
-            // Update all balance displays immediately
+            // ── Update all balance displays ───────────────────────────────────
             document.querySelectorAll('#account-balance-nav').forEach(el => {
                 el.innerText = db_finance.toLocaleString();
             });
@@ -3819,16 +3897,70 @@ function staffNormalizeProducts(items) {
             await persist();
             renderFinanceLedger();
 
-            if (btn) { btn.disabled = false; btn.innerHTML = '🔄 Recalc Balance'; }
+            if (btn) { btn.disabled = false; btn.innerHTML = '🔍 Audit &amp; Recalc'; }
 
-            if (Math.abs(diff) < 0.01) {
-                showToast('✅ Balance verified — no drift detected. Everything is in sync.', 'success');
+            // ── Build audit report toast ──────────────────────────────────────
+            const lines = [];
+            lines.push(`📊 Sales income:       ₦${incomeFromSales.toLocaleString()}`);
+            lines.push(`💳 Deposit income:     ₦${incomeFromDeposits.toLocaleString()}`);
+            lines.push(`🛒 Purchase expenses:  ₦${expenseFromPurchases.toLocaleString()}`);
+            lines.push(`✏️  Manual net:         ₦${manualNet >= 0 ? '+' : ''}${manualNet.toLocaleString()}`);
+            lines.push(`🗑️  Orphan entries removed: ${orphanCount}`);
+            lines.push(`💰 Old balance: ₦${oldBalance.toLocaleString()}`);
+            lines.push(`✅ New balance: ₦${db_finance.toLocaleString()}`);
+
+            // Show detailed modal report
+            const reportHtml = `
+                <div style="font-family:monospace;font-size:13px;line-height:2;padding:8px 0;">
+                    <div style="margin-bottom:12px;font-size:15px;font-weight:700;color:var(--odoo-purple);">🔍 Audit Report</div>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:6px 8px;color:#555;">Sales Income</td>
+                            <td style="text-align:right;font-weight:700;color:#27ae60;">+₦${incomeFromSales.toLocaleString()}</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:6px 8px;color:#555;">Credit Deposits Collected</td>
+                            <td style="text-align:right;font-weight:700;color:#27ae60;">+₦${incomeFromDeposits.toLocaleString()}</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #eee;">
+                            <td style="padding:6px 8px;color:#555;">Purchase / Restock Expenses</td>
+                            <td style="text-align:right;font-weight:700;color:#e74c3c;">−₦${expenseFromPurchases.toLocaleString()}</td>
+                        </tr>
+                        <tr style="border-bottom:2px solid #ddd;">
+                            <td style="padding:6px 8px;color:#555;">Manual Entries (net)</td>
+                            <td style="text-align:right;font-weight:700;color:${manualNet>=0?'#27ae60':'#e74c3c'};">${manualNet>=0?'+':''}₦${Math.abs(manualNet).toLocaleString()}</td>
+                        </tr>
+                        <tr style="background:#fef9ff;border-bottom:1px solid #eee;">
+                            <td style="padding:8px 8px;color:#888;font-size:11px;">Orphan entries removed</td>
+                            <td style="text-align:right;color:${orphanCount>0?'#e67e22':'#27ae60'};font-weight:700;">${orphanCount > 0 ? '🗑️ ' + orphanCount + ' deleted' : '✅ None found'}</td>
+                        </tr>
+                        <tr style="background:#fef9ff;border-bottom:1px solid #eee;">
+                            <td style="padding:8px 8px;color:#888;font-size:11px;">Previous balance</td>
+                            <td style="text-align:right;color:#888;">₦${oldBalance.toLocaleString()}</td>
+                        </tr>
+                        <tr style="background:#f0fff4;">
+                            <td style="padding:10px 8px;font-weight:800;font-size:14px;color:#2c3e50;">New Balance</td>
+                            <td style="text-align:right;font-weight:900;font-size:16px;color:var(--odoo-purple);">₦${db_finance.toLocaleString()}</td>
+                        </tr>
+                    </table>
+                    ${Math.abs(diff) > 0.01 ? `<div style="margin-top:12px;padding:8px 12px;background:${diff>0?'#d4edda':'#fff3cd'};border-radius:8px;font-size:12px;color:${diff>0?'#155724':'#856404'};">Balance was adjusted ${diff>0?'up':'down'} by ₦${Math.abs(diff).toLocaleString()}</div>` : `<div style="margin-top:12px;padding:8px 12px;background:#d4edda;border-radius:8px;font-size:12px;color:#155724;">✅ Balance was already accurate — no adjustment needed.</div>`}
+                </div>`;
+
+            // Use existing confirm modal as a read-only report display
+            const modalBox = document.getElementById('confirm-modal-box') || document.getElementById('modal-confirm');
+            const existing = document.getElementById('confirm-msg');
+            if (existing && modalBox) {
+                existing.innerHTML = reportHtml;
+                // Swap buttons to just show OK
+                const btns = modalBox.querySelectorAll('button');
+                btns.forEach((b, i) => {
+                    if (i === 0) { b.textContent = '✅ Done'; b.onclick = () => { modalBox.style.display = 'none'; }; }
+                    else b.style.display = 'none';
+                });
+                modalBox.style.display = 'flex';
             } else {
-                const direction = diff > 0 ? 'up' : 'down';
-                showToast(
-                    `🔄 Balance recalculated. Adjusted ${direction} by ₦${Math.abs(diff).toLocaleString()} → New balance: ₦${db_finance.toLocaleString()}`,
-                    diff > 0 ? 'success' : 'warning'
-                );
+                // Fallback: alert summary
+                showToast(`✅ Audit done. ${orphanCount} orphans removed. New balance: ₦${db_finance.toLocaleString()}`, orphanCount > 0 ? 'warning' : 'success');
             }
         }
 
