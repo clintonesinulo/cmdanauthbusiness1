@@ -805,6 +805,10 @@
 </div>
 </div>
 </div>
+<div id="tagged-msg-banner" style="display:none; position:fixed; top:0; left:0; right:0; background:#f39c12; color:white; z-index:9500; padding:10px 16px; font-size:13px; font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,0.2); align-items:center; justify-content:space-between; gap:10px; cursor:pointer;" onclick="toggleChat()">
+<span id="tagged-msg-text">📌 New message</span>
+<span style="font-size:11px; opacity:0.85; white-space:nowrap;">Tap to view →</span>
+</div>
 <div id="chat-panel">
 <div class="chat-header">
 <span>Internal Comms</span>
@@ -814,6 +818,11 @@
 <b>Online now:</b> <span id="chat-online-list">—</span>
 </div>
 <div class="chat-messages" id="chat-box"></div>
+<div style="padding:6px 10px; border-top:1px solid #eee; background:#fafafa; flex-shrink:0;">
+<select id="chat-tag-select" style="width:100%; margin:0; padding:6px 10px; font-size:12px; border-radius:8px;">
+<option value="all">📢 Message Everyone (General)</option>
+</select>
+</div>
 <div class="chat-input-area">
 <input id="chat-input" onkeypress="if(event.key==='Enter') sendChat()" placeholder="Type message..." style="flex:1;" type="text"/>
 <button class="btn-odoo btn-teal" onclick="sendChat()" style="padding: 8px 15px; margin-left: 5px; border-radius:20px;">Send</button>
@@ -1063,7 +1072,6 @@
       <div class="mini">Unified record of all income and expenditure — product sales, purchases and manual entries.</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <button class="btn-odoo" style="padding:8px 14px;font-size:13px;background:#34495e;color:white;" onclick="recallFinanceLedger()" title="Refresh the ledger and remove any leftover duplicate entries">🔄 Recall / Refresh</button>
       <button class="btn-odoo btn-teal" style="padding:8px 14px;font-size:13px;" onclick="exportFinanceLedgerExcel()">📥 Export Excel</button>
     </div>
   </div>
@@ -1306,6 +1314,17 @@ function staffNormalizeProducts(items) {
                     showToast(`Your account has been ${me.status}. You have been logged out.`, 'error');
                     setTimeout(() => { beaconOffline(user.id); location.reload(); }, 2500);
                     return;
+                }
+                // Re-point `user` to the fresh staff record so stars/role/etc. stay live
+                if (me) {
+                    const starsChanged = (me.stars || 0) !== (user.stars || 0);
+                    user = me;
+                    if (starsChanged) {
+                        const myStars = user.stars || 0;
+                        const starsBadge = myStars > 0 ? ` <span style="color:#f39c12;">${'★'.repeat(Math.min(myStars,5))}${myStars>5?` (${myStars})`:''}</span>` : '';
+                        const ud = document.getElementById('user-display');
+                        if (ud) ud.innerHTML = `${escapeHtml(user.name)} (${user.role})${starsBadge}`;
+                    }
                 }
                 renderStaff();
             }
@@ -1989,7 +2008,9 @@ function staffNormalizeProducts(items) {
         }
 
         function initUI() {
-            document.getElementById('user-display').innerText = `${user.name} (${user.role})`;
+            const myStars = user.stars || 0;
+            const starsBadge = myStars > 0 ? ` <span style="color:#f39c12;">${'★'.repeat(Math.min(myStars,5))}${myStars>5?` (${myStars})`:''}</span>` : '';
+            document.getElementById('user-display').innerHTML = `${escapeHtml(user.name)} (${user.role})${starsBadge}`;
             document.getElementById('nav-title').innerText = db_biz.name ? db_biz.name.toUpperCase() : 'WORKSPACE';
             document.getElementById('account-balance-nav').innerText = `${db_finance.toLocaleString()}`;
 
@@ -3329,10 +3350,33 @@ function staffNormalizeProducts(items) {
             const isAdmin = user && user.role === 'admin';
             
             if (head) {
-                head.innerHTML = `<tr><th>Name</th><th>Role</th><th>Status</th><th>Online</th><th>Access</th><th>Sales Made</th><th>Revenue Generated</th>${isAdmin ? '<th>Action</th>' : ''}</tr>`;
+                head.innerHTML = `<tr><th>Rank</th><th>Name</th><th>Role</th><th>Status</th><th>Online</th><th>Access</th><th>Sales Made</th><th>Revenue Generated</th><th>Stars</th>${isAdmin ? '<th>Action</th>' : ''}</tr>`;
             }
 
-            body.innerHTML = db_staff.map(s => {
+            // ── Compute performance + ranking score for every staff member ──
+            // Rank = sales count (primary driver) + a weighted boost from stars,
+            // so stars meaningfully move someone up the leaderboard without
+            // completely overriding actual sales performance.
+            const withPerf = db_staff.map(s => {
+                const staffSales = db_sales.filter(sale => sale.cashier === s.name);
+                const salesCount = staffSales.length;
+                const totalRevenue = staffSales.reduce((sum, sale) => sum + sale.total, 0);
+                const stars = s.stars || 0;
+                const rankScore = salesCount + (stars * 3); // each star ≈ 3 extra sales of weight
+                return { ...s, _salesCount: salesCount, _totalRevenue: totalRevenue, _stars: stars, _rankScore: rankScore };
+            });
+
+            // Sort active staff by rank score descending for the leaderboard position;
+            // deleted staff sink to the bottom regardless of score.
+            const ranked = [...withPerf].sort((a, b) => {
+                if (a.status === 'deleted' && b.status !== 'deleted') return 1;
+                if (b.status === 'deleted' && a.status !== 'deleted') return -1;
+                return b._rankScore - a._rankScore;
+            });
+            const rankMap = {};
+            ranked.forEach((s, i) => { rankMap[s.id] = i + 1; });
+
+            body.innerHTML = withPerf.map(s => {
                 const badge = s.status === 'active' ? 'badge-active' : (s.status === 'deleted' ? 'badge-deleted' : 'badge-suspended');
                 const access = s.role === 'admin' ? 'All ERP modules' : s.role === 'inventory' ? 'POS + Inventory + Purchases' : 'POS only';
                 
@@ -3352,10 +3396,13 @@ function staffNormalizeProducts(items) {
                     ? '<span class="online-tag">Online</span>'
                     : `<span class="offline-tag">Offline</span><br><small style="color:#aaa;">Last seen: ${relTime}</small>`}`;
 
-                // Calculate Staff Performance
-                const staffSales = db_sales.filter(sale => sale.cashier === s.name);
-                const salesCount = staffSales.length;
-                const totalRevenue = staffSales.reduce((sum, sale) => sum + sale.total, 0);
+                const rank = rankMap[s.id];
+                const rankBadge = s.status === 'deleted' ? '—' :
+                    rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
+
+                // Star display: filled vs empty, max shown 5, with raw count if more
+                const starCount = s._stars;
+                const starsHtml = `<span style="color:#f39c12; font-size:14px; letter-spacing:1px;">${'★'.repeat(Math.min(starCount,5))}${'☆'.repeat(Math.max(0,5-starCount))}</span>${starCount > 5 ? `<br><small style="color:#888;">(${starCount} total)</small>` : ''}`;
 
                 let actionHtml = '';
                 if (isAdmin) {
@@ -3363,22 +3410,44 @@ function staffNormalizeProducts(items) {
                         <button class="btn-odoo" style="padding:5px 10px; font-size:11px;" onclick="openStaffModal(${s.id})">Edit</button>
                         ${s.id !== 1 && s.status !== 'deleted' ? `<button class="btn-odoo" style="padding:5px 10px; font-size:11px; background:#f39c12;" onclick="toggleSuspend(${s.id})">${s.status === 'suspended' ? 'Activate' : 'Suspend'}</button>` : ''}
                         ${s.id !== 1 && s.status !== 'deleted' ? `<button class="btn-odoo btn-danger" style="padding:5px 10px; font-size:11px;" onclick="softDeleteStaff(${s.id})">Del</button>` : ''}
+                        ${s.status !== 'deleted' ? `<div style="margin-top:5px; display:flex; gap:3px; align-items:center;">
+                            <button class="btn-odoo" style="padding:3px 8px; font-size:11px; background:#27ae60;" onclick="adjustStaffStars(${s.id}, 1)" title="Give a star">⭐ +1</button>
+                            <button class="btn-odoo" style="padding:3px 8px; font-size:11px; background:#95a5a6;" onclick="adjustStaffStars(${s.id}, -1)" title="Remove a star">−1</button>
+                        </div>` : ''}
                     </td>`;
                 }
 
                 return `
                     <tr style="${s.status === 'deleted' ? 'opacity:0.6;' : ''}">
-                        <td><b>${escapeHtml(s.name)}</b><br><small style="color:#7f8c8d;">PIN: ***${String(s.pin || '').slice(-1)} | ${escapeHtml(s.phone || '')}</small></td>
+                        <td style="font-weight:bold; font-size:15px; text-align:center;">${rankBadge}</td>
+                        <td><b>${escapeHtml(s.name)}</b> ${starCount > 0 ? `<span style="color:#f39c12; font-size:11px;">${'★'.repeat(Math.min(starCount,3))}${starCount>3?'+':''}</span>` : ''}<br><small style="color:#7f8c8d;">PIN: ***${String(s.pin || '').slice(-1)} | ${escapeHtml(s.phone || '')}</small></td>
                         <td>${String(s.role || '').toUpperCase()}<br><small>${escapeHtml(s.unit || '')}</small></td>
                         <td><span class="badge ${badge}">${s.status}</span></td>
                         <td>${onlineHtml}</td>
                         <td>${access}</td>
-                        <td style="font-weight:bold;">${salesCount} transactions</td>
-                        <td style="font-weight:bold; color:var(--odoo-teal);">₦${totalRevenue.toLocaleString()}</td>
+                        <td style="font-weight:bold;">${s._salesCount} transactions</td>
+                        <td style="font-weight:bold; color:var(--odoo-teal);">₦${s._totalRevenue.toLocaleString()}</td>
+                        <td>${starsHtml}</td>
                         ${actionHtml}
                     </tr>
                 `;
             }).join('');
+        }
+
+        // ── Admin: give or remove a star from a staff member ──────────────────
+        async function adjustStaffStars(staffId, delta) {
+            if (!user || user.role !== 'admin') return showToast('Admin access required.', 'error');
+            const idx = db_staff.findIndex(s => s.id === staffId);
+            if (idx === -1) return showToast('Staff not found.', 'error');
+            const current = db_staff[idx].stars || 0;
+            const updated = Math.max(0, current + delta);
+            db_staff[idx].stars = updated;
+            await persist();
+            renderStaff();
+            showToast(delta > 0
+                ? `⭐ Gave a star to ${db_staff[idx].name}! Now has ${updated} star${updated===1?'':'s'}.`
+                : `Removed a star from ${db_staff[idx].name}. Now has ${updated} star${updated===1?'':'s'}.`,
+                'success');
         }
 
         // ===================== CHAT =====================
@@ -3388,18 +3457,26 @@ function staffNormalizeProducts(items) {
             document.getElementById('chat-badge').style.display = 'none'; 
             const fabBadge = document.getElementById('chat-badge-fab');
             if (fabBadge) fabBadge.style.display = 'none';
-            if (panel.style.display === 'flex') scrollToChatBottom(); 
+            if (panel.style.display === 'flex') {
+                scrollToChatBottom(); 
+                _markChatReadForMe();   // opening the chat clears the persistent banner
+            }
         }
         async function sendChat() { 
             const input = document.getElementById('chat-input'); 
             if (!input.value.trim()) return; 
+            const tagSelect = document.getElementById('chat-tag-select');
+            const targetId = tagSelect ? tagSelect.value : 'all'; // 'all' = general, else staff id
+            const targetStaff = targetId !== 'all' ? db_staff.find(s => String(s.id) === String(targetId)) : null;
             const msg = { 
                 id: Date.now(), 
                 sender: user.name, 
                 senderId: user.id, 
                 msg: input.value.trim(), 
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                senderOnline: true
+                senderOnline: true,
+                targetId: targetId,                              // 'all' or a specific staff id
+                targetName: targetStaff ? targetStaff.name : null
             };
             input.value = '';
             db_chat.push(msg);
@@ -3408,6 +3485,17 @@ function staffNormalizeProducts(items) {
             scrollToChatBottom(); 
         }
         function renderChat() { 
+            // Populate the tag-staff dropdown (everyone except yourself)
+            const tagSelect = document.getElementById('chat-tag-select');
+            if (tagSelect) {
+                const prevVal = tagSelect.value || 'all';
+                const others = db_staff.filter(s => s.status === 'active' && s.id !== (user && user.id));
+                tagSelect.innerHTML = `<option value="all">📢 Message Everyone (General)</option>` +
+                    others.map(s => `<option value="${s.id}">👤 Tag: ${escapeHtml(s.name)}</option>`).join('');
+                // Restore previous selection if it still exists
+                if ([...tagSelect.options].some(o => o.value === prevVal)) tagSelect.value = prevVal;
+            }
+
             if (db_chat.length > lastChatLen) { 
                 const panelVisible = document.getElementById('chat-panel').style.display === 'flex'; 
                 const last = db_chat[db_chat.length - 1]; 
@@ -3430,13 +3518,58 @@ function staffNormalizeProducts(items) {
                 const senderStaff = db_staff.find(x => x.id === c.senderId || x.name === c.sender);
                 const senderOnline = senderStaff ? !!senderStaff.online : false;
                 const onlineDot = `<span class="status-dot ${senderOnline ? 'status-online' : 'status-offline'}" style="width:7px;height:7px;margin-right:3px;"></span>`;
+                const tagLabel = c.targetId && c.targetId !== 'all'
+                    ? `<span style="background:#f39c12; color:white; font-size:9px; padding:1px 6px; border-radius:8px; margin-left:5px;">→ ${escapeHtml(c.targetName || 'Staff')}</span>`
+                    : `<span style="background:#3498db; color:white; font-size:9px; padding:1px 6px; border-radius:8px; margin-left:5px;">📢 General</span>`;
                 return `<div class="chat-msg ${isMine ? 'msg-mine' : 'msg-other'}">
                     <span style="font-size:10px; font-weight:bold; display:block; margin-bottom:3px; opacity:0.8;">
-                        ${onlineDot}${isMine ? 'You' : escapeHtml(c.sender)} • ${c.time}
+                        ${onlineDot}${isMine ? 'You' : escapeHtml(c.sender)} • ${c.time}${tagLabel}
                     </span>
                     ${escapeHtml(c.msg)}
                 </div>`;
             }).join(''); 
+
+            _updateTaggedMsgBanner();
+        }
+
+        // ── Persistent banner: shows the most recent message addressed to
+        //    this user (tagged to them OR general) that they haven't yet
+        //    opened the chat icon to read. Stays on screen across screens
+        //    and reloads until they tap the chat icon.
+        function _updateTaggedMsgBanner() {
+            const banner = document.getElementById('tagged-msg-banner');
+            const textEl = document.getElementById('tagged-msg-text');
+            if (!banner || !textEl || !user) return;
+
+            // Messages addressed to me: tagged directly to me, or general (all),
+            // excluding ones I sent myself.
+            const relevant = db_chat.filter(c =>
+                c.sender !== user.name &&
+                (c.targetId === 'all' || String(c.targetId) === String(user.id))
+            );
+            if (!relevant.length) { banner.style.display = 'none'; return; }
+
+            const lastMsg = relevant[relevant.length - 1];
+            const readUpTo = parseInt(localStorage.getItem('v72_chat_read_' + user.id) || '0', 10);
+
+            if (lastMsg.id > readUpTo) {
+                const isGeneral = lastMsg.targetId === 'all';
+                textEl.textContent = `${isGeneral ? '📢' : '📌'} ${lastMsg.sender}: ${lastMsg.msg}`;
+                banner.style.display = 'flex';
+            } else {
+                banner.style.display = 'none';
+            }
+        }
+
+        // Mark all current messages as read for this user (called when they
+        // open the chat icon) — banner disappears and stays gone until a
+        // NEW message arrives after this point.
+        function _markChatReadForMe() {
+            if (!user || !db_chat.length) return;
+            const lastId = db_chat[db_chat.length - 1].id;
+            localStorage.setItem('v72_chat_read_' + user.id, String(lastId));
+            const banner = document.getElementById('tagged-msg-banner');
+            if (banner) banner.style.display = 'none';
         }
         function scrollToChatBottom() { const box = document.getElementById('chat-box'); box.scrollTop = box.scrollHeight; }
 
@@ -3663,38 +3796,6 @@ function staffNormalizeProducts(items) {
 
         // Build a fully unified, deduplicated list of all financial activity.
         // Sales are broken down per product group (using db_sales items + db_inv).
-        // ── Recall / Refresh: force a clean re-pull of the ledger and
-        //    strip out any leftover legacy sale/purchase rows that were
-        //    previously saved directly into db_financeLog (now retired —
-        //    sales & purchases are built live from db_sales/db_acc/db_purch).
-        //    This is what removes duplicates if a sync didn't go out cleanly.
-        async function recallFinanceLedger() {
-            const before = (db_financeLog || []).length;
-            // Strip any old auto-generated 'sale' or 'purchase' source entries
-            // — these are legacy duplicates; manual entries (source:'manual')
-            // are always kept.
-            db_financeLog = (db_financeLog || []).filter(e => e.source === 'manual' || !e.source);
-            const removed = before - db_financeLog.length;
-
-            // Reset filters back to defaults so nothing hides the refreshed data
-            const periodEl = document.getElementById('fl-period');
-            const typeEl   = document.getElementById('fl-type');
-            const prodEl   = document.getElementById('fl-product');
-            const searchEl = document.getElementById('fl-search');
-            if (periodEl) periodEl.value = 'all';
-            if (typeEl)   typeEl.value   = 'all';
-            if (prodEl)   prodEl.value   = 'all';
-            if (searchEl) searchEl.value = '';
-
-            if (removed > 0) {
-                await persist();
-                showToast(`🔄 Ledger refreshed — removed ${removed} duplicate ${removed===1?'entry':'entries'}.`, 'success');
-            } else {
-                showToast('🔄 Ledger refreshed — no duplicates found.', 'success');
-            }
-            renderFinanceLedger();
-        }
-
         function getFinanceLedgerEntries() {
             if (!db_financeLog) db_financeLog = [];
             const seenIds = new Set();
