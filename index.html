@@ -2191,8 +2191,6 @@ function staffNormalizeProducts(items) {
 
         // ===================== THERMAL RECEIPT PRINTING =====================
         function printThermalReceipt(inv) {
-            const w = window.open('', '_blank', 'width=400,height=600');
-
             let itemsHtml = inv.items.map(i => `
                 <tr>
                     <td style="padding: 3px 0;">${i.name}</td>
@@ -2229,24 +2227,7 @@ function staffNormalizeProducts(items) {
                 <hr style="border-top:2px dashed #000; margin:8px 0;">`;
             }
 
-            const html = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Receipt ${inv.inv}</title>
-                <style>
-                    body { font-family: 'Courier New', Courier, monospace; width: 300px; margin: 0 auto; padding: 10px; color: #000; font-size: 12px; }
-                    h2, h3, h4 { margin: 5px 0; text-align: center; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
-                    th, td { border-bottom: 1px dashed #000; padding: 5px 0; }
-                    .text-right { text-align: right; }
-                    .text-center { text-align: center; }
-                    .totals { margin-top: 10px; font-weight: bold; font-size: 13px; }
-                    .totals div { display: flex; justify-content: space-between; margin-bottom: 4px; }
-                    @media print { body { width: 100%; margin: 0; padding: 0; } }
-                </style>
-            </head>
-            <body>
+            const receiptBodyHtml = `
                 <h2>${db_biz.name || 'Store Name'}</h2>
                 <div class="text-center">${db_biz.address || ''}</div>
                 <div class="text-center">${db_biz.phone || ''}</div>
@@ -2268,15 +2249,99 @@ function staffNormalizeProducts(items) {
                 ${creditHtml}
                 <hr style="border-top: 1px dashed #000; margin: 10px 0;">
                 <div class="text-center">${(inv.amountPaid||0) >= (inv.total||0) && inv.isCredit ? 'Thank you — account fully settled!' : 'Thank you for your business!'}</div>
-                <script>
-                    window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); }
-                <\/script>
-            </body>
-            </html>
             `;
-            w.document.open();
-            w.document.write(html);
-            w.document.close();
+
+            // ── Detect mobile: popups via window.open() are frequently blocked
+            // on phones (especially iOS Safari/Chrome Android) because the call
+            // often happens after an async persist(), so by the time it fires
+            // it's no longer treated as a trusted user gesture. window.print()
+            // inside a detached popup also fails silently on many mobile browsers.
+            // Fix: render the receipt directly in THIS page as a full-screen
+            // overlay and call window.print() on the current document — this
+            // always works because there's no popup and no cross-window timing
+            // issue involved. ──────────────────────────────────────────────────
+            const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+            if (isMobile) {
+                _printReceiptInPage(receiptBodyHtml);
+            } else {
+                // Desktop: popup window still works fine and lets the cashier
+                // keep working in the main tab while the print dialog is open.
+                const w = window.open('', '_blank', 'width=400,height=600');
+                if (!w) {
+                    // Popup was blocked anyway — fall back to in-page printing
+                    _printReceiptInPage(receiptBodyHtml);
+                    return;
+                }
+                const html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Receipt ${inv.inv}</title>
+                    <style>
+                        body { font-family: 'Courier New', Courier, monospace; width: 300px; margin: 0 auto; padding: 10px; color: #000; font-size: 12px; }
+                        h2, h3, h4 { margin: 5px 0; text-align: center; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+                        th, td { border-bottom: 1px dashed #000; padding: 5px 0; }
+                        .text-right { text-align: right; }
+                        .text-center { text-align: center; }
+                        .totals { margin-top: 10px; font-weight: bold; font-size: 13px; }
+                        .totals div { display: flex; justify-content: space-between; margin-bottom: 4px; }
+                        @media print { body { width: 100%; margin: 0; padding: 0; } }
+                    </style>
+                </head>
+                <body>
+                    ${receiptBodyHtml}
+                    <script>
+                        window.onload = function() { window.print(); setTimeout(function(){ window.close(); }, 500); }
+                    <\/script>
+                </body>
+                </html>
+                `;
+                w.document.open();
+                w.document.write(html);
+                w.document.close();
+            }
+        }
+
+        // ── Mobile-safe printing: builds a full-screen overlay in the CURRENT
+        // page (no popup needed) and triggers the native print sheet directly.
+        // A "print" media query hides everything else on the page so only the
+        // receipt shows up in the print output / PDF / share sheet.
+        function _printReceiptInPage(receiptBodyHtml) {
+            let overlay = document.getElementById('mobile-receipt-print-overlay');
+            if (overlay) overlay.remove();
+
+            overlay = document.createElement('div');
+            overlay.id = 'mobile-receipt-print-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:#fff; z-index:99999; overflow-y:auto; padding:16px;';
+            overlay.innerHTML = `
+                <div id="mobile-receipt-content" style="font-family:'Courier New', Courier, monospace; width:300px; max-width:100%; margin:0 auto; padding:10px; color:#000; font-size:12px;">
+                    ${receiptBodyHtml}
+                </div>
+                <div id="mobile-receipt-controls" style="display:flex; gap:10px; max-width:300px; margin:16px auto 0;">
+                    <button onclick="window.print()" style="flex:1; padding:12px; border-radius:8px; border:none; background:var(--odoo-teal,#1abc9c); color:white; font-weight:700; font-size:14px;">🖨️ Print / Save PDF</button>
+                    <button onclick="document.getElementById('mobile-receipt-print-overlay').remove()" style="flex:1; padding:12px; border-radius:8px; border:1px solid #ddd; background:white; color:#555; font-weight:700; font-size:14px;">Close</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            // Inject a print stylesheet (once) that hides everything except
+            // the receipt overlay when printing, and shows the controls only
+            // on screen (never in the printed output).
+            if (!document.getElementById('mobile-receipt-print-style')) {
+                const style = document.createElement('style');
+                style.id = 'mobile-receipt-print-style';
+                style.textContent = `
+                    @media print {
+                        body * { visibility: hidden !important; }
+                        #mobile-receipt-print-overlay, #mobile-receipt-print-overlay * { visibility: visible !important; }
+                        #mobile-receipt-print-overlay { position:absolute; left:0; top:0; width:100%; }
+                        #mobile-receipt-controls { display: none !important; }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
         }
 
         // ===================== POS & BARCODE =====================
@@ -3376,7 +3441,7 @@ function staffNormalizeProducts(items) {
             const rankMap = {};
             ranked.forEach((s, i) => { rankMap[s.id] = i + 1; });
 
-            body.innerHTML = withPerf.map(s => {
+            body.innerHTML = ranked.map(s => {
                 const badge = s.status === 'active' ? 'badge-active' : (s.status === 'deleted' ? 'badge-deleted' : 'badge-suspended');
                 const access = s.role === 'admin' ? 'All ERP modules' : s.role === 'inventory' ? 'POS + Inventory + Purchases' : 'POS only';
                 
@@ -3400,6 +3465,14 @@ function staffNormalizeProducts(items) {
                 const rankBadge = s.status === 'deleted' ? '—' :
                     rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
 
+                // Leaderboard row tint for the top 3 (deleted staff never get a tint)
+                let rowTint = '';
+                if (s.status !== 'deleted') {
+                    if (rank === 1) rowTint = 'background:linear-gradient(90deg,#fff8e1,#fffefa); border-left:4px solid #f1c40f;';
+                    else if (rank === 2) rowTint = 'background:linear-gradient(90deg,#f5f5f5,#fafafa); border-left:4px solid #bdc3c7;';
+                    else if (rank === 3) rowTint = 'background:linear-gradient(90deg,#fdf0e6,#fffaf5); border-left:4px solid #e67e22;';
+                }
+
                 // Star display: filled vs empty, max shown 5, with raw count if more
                 const starCount = s._stars;
                 const starsHtml = `<span style="color:#f39c12; font-size:14px; letter-spacing:1px;">${'★'.repeat(Math.min(starCount,5))}${'☆'.repeat(Math.max(0,5-starCount))}</span>${starCount > 5 ? `<br><small style="color:#888;">(${starCount} total)</small>` : ''}`;
@@ -3418,8 +3491,8 @@ function staffNormalizeProducts(items) {
                 }
 
                 return `
-                    <tr style="${s.status === 'deleted' ? 'opacity:0.6;' : ''}">
-                        <td style="font-weight:bold; font-size:15px; text-align:center;">${rankBadge}</td>
+                    <tr style="${s.status === 'deleted' ? 'opacity:0.6;' : rowTint}">
+                        <td style="font-weight:900; font-size:18px; text-align:center;">${rankBadge}</td>
                         <td><b>${escapeHtml(s.name)}</b> ${starCount > 0 ? `<span style="color:#f39c12; font-size:11px;">${'★'.repeat(Math.min(starCount,3))}${starCount>3?'+':''}</span>` : ''}<br><small style="color:#7f8c8d;">PIN: ***${String(s.pin || '').slice(-1)} | ${escapeHtml(s.phone || '')}</small></td>
                         <td>${String(s.role || '').toUpperCase()}<br><small>${escapeHtml(s.unit || '')}</small></td>
                         <td><span class="badge ${badge}">${s.status}</span></td>
@@ -3870,8 +3943,11 @@ function staffNormalizeProducts(items) {
                             refId:       sale.inv,
                             saleInv:     sale.inv,
                             groupName:   grp,
-                            editable:    true,
-                            correctable: true
+                            // Only legacy (pre-snapshot) sales need manual correction —
+                            // new sales already freeze the exact discounted amount and
+                            // can never be wrong, so no edit icon clutters them.
+                            editable:    !usedSnapshot,
+                            correctable: !usedSnapshot
                         });
                     });
                 } else {
